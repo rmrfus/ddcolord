@@ -48,6 +48,12 @@ service.
   thing that exposes the copy.
 - **Probe EDID only on the GPU's own I2C adapters.** The SMBus controllers
   carry RAM SPD EEPROMs at the same 0x50.
+- **Rule out twin EDIDs from sysfs before probing, not from probe results.**
+  A failed 0x50 read must count as "no monitor" (that is what an empty port
+  looks like), so one transient NAK on the twin's bus would leave a single
+  match and bind the output to the other monitor for good.
+- **The bus cache lives as long as the connector.** Re-looking-up after a
+  failure finds the same bus and logs it every poll.
 - **`Monitor` and `Mode` carry `deny_unknown_fields` but no container-level
   `#[serde(default)]`,** against the rust skill's rule. Their identity fields
   are required: with a container default, a missing `vendor` or `model`

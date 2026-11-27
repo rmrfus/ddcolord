@@ -31,11 +31,15 @@ pub struct Output {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BusLookup {
     Found(u32),
-    /// A candidate bus was locked by another process; try again later.
-    Busy,
+    /// No bus matched, and this one was locked by another process, so the
+    /// lookup decided nothing; try again later.
+    Busy(u32),
     NotFound,
 }
 
+/// Connected outputs, including those whose EDID is missing or short (a KVM
+/// that does not pass it through): callers report those rather than lose
+/// them without a word.
 pub fn connected() -> Result<Vec<Output>> {
     let mut out = Vec::new();
     let dir = Path::new("/sys/class/drm");
@@ -58,9 +62,6 @@ pub fn connected() -> Result<Vec<Output>> {
             continue;
         }
         let edid = fs::read(sysfs.join("edid")).unwrap_or_default();
-        if edid.len() < edid::BASE_LEN {
-            continue;
-        }
         out.push(Output {
             connector: connector.to_string(),
             sysfs,
@@ -71,37 +72,64 @@ pub fn connected() -> Result<Vec<Output>> {
     Ok(out)
 }
 
-/// An error is a setup problem (no access to /dev/i2c-N, i2c-dev not loaded,
-/// identical EDIDs on two buses), never "nothing on this port": an adapter
-/// with no monitor behind it is just not a match.
-pub fn find_bus(out: &Output) -> Result<BusLookup> {
+/// `all` is every connected output, `out` among them. An error is a setup
+/// problem (no access to /dev/i2c-N, i2c-dev not loaded, two monitors with
+/// the same EDID), never "nothing on this port": an adapter with no monitor
+/// behind it is just not a match.
+pub fn find_bus(out: &Output, all: &[Output]) -> Result<BusLookup> {
     if let Some(n) = linked_bus(&out.sysfs) {
         return Ok(BusLookup::Found(n));
     }
-    let mut busy = false;
+    let gpu = gpu_of(&out.sysfs);
+    let Some(base) = out.edid.get(..edid::BASE_LEN) else {
+        return Ok(BusLookup::NotFound);
+    };
+    // Twins are ruled out from sysfs, before any I2C read: probing alone
+    // cannot do it, because one failed read on the twin's bus would leave a
+    // single "match" and bind this output to the other monitor for good.
+    if let Some(twin) = all.iter().find(|o| {
+        o.connector != out.connector
+            && o.edid.get(..edid::BASE_LEN) == Some(base)
+            && gpu_of(&o.sysfs) == gpu
+    }) {
+        bail!(
+            "{} has a byte-identical EDID, and this driver does not link \
+             connectors to I2C buses, so the two cannot be told apart",
+            twin.connector
+        );
+    }
+    let Some(gpu) = gpu else {
+        return Ok(BusLookup::NotFound);
+    };
+    let mut busy = None;
     let mut found = Vec::new();
-    for n in sibling_buses(&out.sysfs) {
-        match edid_matches(n, &out.edid)? {
+    for n in sibling_buses(&gpu) {
+        match edid_matches(n, base)? {
             Some(true) => found.push(n),
             Some(false) => {}
-            None => busy = true,
+            None => busy = busy.or(Some(n)),
         }
     }
-    // A locked bus might be a second match, so a lookup that skipped one
-    // decides nothing.
-    match found.as_slice() {
-        _ if busy => Ok(BusLookup::Busy),
-        [] => Ok(BusLookup::NotFound),
-        [n] => Ok(BusLookup::Found(*n)),
-        many => bail!(
-            "this EDID answers on {}; identical monitors without serial numbers \
-             cannot be told apart",
+    match (found.as_slice(), busy) {
+        ([n], _) => Ok(BusLookup::Found(*n)),
+        ([], Some(n)) => Ok(BusLookup::Busy(n)),
+        ([], None) => Ok(BusLookup::NotFound),
+        // Twins were excluded above; this is an EDID on a bus whose connector
+        // DRM does not report as connected.
+        (many, _) => bail!(
+            "this EDID answers on {}",
             many.iter()
                 .map(|n| format!("i2c-{n}"))
                 .collect::<Vec<_>>()
                 .join(" and ")
         ),
     }
+}
+
+/// The PCI function behind a connector: card1-DP-2/device is card1, and
+/// card1/device is the GPU.
+fn gpu_of(sysfs: &Path) -> Option<PathBuf> {
+    fs::canonicalize(sysfs.join("device/device")).ok()
 }
 
 /// `ddc` symlink, or an `i2c-N` child (DP AUX channels).
@@ -124,12 +152,8 @@ fn bus_number(name: &str) -> Option<u32> {
     name.strip_prefix("i2c-")?.parse().ok()
 }
 
-/// i2c adapters whose parent is the PCI device behind this connector's card.
-fn sibling_buses(sysfs: &Path) -> Vec<u32> {
-    // card1-DP-2/device → card1; card1/device → the PCI function.
-    let Ok(gpu) = fs::canonicalize(sysfs.join("device/device")) else {
-        return Vec::new();
-    };
+/// i2c adapters whose parent is the given PCI device.
+fn sibling_buses(gpu: &Path) -> Vec<u32> {
     let Ok(entries) = fs::read_dir("/sys/bus/i2c/devices") else {
         return Vec::new();
     };
@@ -146,7 +170,10 @@ fn sibling_buses(sysfs: &Path) -> Vec<u32> {
 }
 
 /// `None` when the bus is locked by someone else. Failing to open the bus is
-/// an error; failing to read an EDID on it only means no monitor is there.
+/// an error. A failed EDID read counts as "no monitor here": an empty port
+/// fails exactly that way, and since twins are excluded before probing, a
+/// transient failure on the right bus only makes this lookup come back
+/// NotFound, to be retried next poll.
 fn edid_matches(n: u32, want: &[u8]) -> Result<Option<bool>> {
     let Some(bus) = Bus::open(n)? else {
         return Ok(None);
@@ -156,5 +183,5 @@ fn edid_matches(n: u32, want: &[u8]) -> Result<Option<bool>> {
         log::debug!("i2c-{n}: no EDID at {EDID_ADDR:#04x}: {e}");
         return Ok(Some(false));
     }
-    Ok(Some(want.get(..edid::BASE_LEN) == Some(&got[..])))
+    Ok(Some(want == got))
 }

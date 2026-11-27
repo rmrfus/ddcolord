@@ -33,6 +33,9 @@ The I2C bus is found through the connector's
 link in sysfs where the driver provides one, and otherwise by reading the
 EDID on each I2C adapter of the same GPU and comparing it with the
 connector's.
+On such a driver, two connected monitors on one GPU with byte\-identical
+EDIDs cannot be told apart, and both are reported as an error instead of
+guessed.
 The bus is locked with
 .BR flock (2)
 around each exchange, the same lock

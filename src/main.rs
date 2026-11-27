@@ -9,7 +9,7 @@ mod edid;
 mod i2c;
 mod notify_ready;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -48,9 +48,9 @@ struct Args {
 /// Per-output state that has to survive between polls.
 #[derive(Debug, Default)]
 struct Tracked {
-    /// Cached bus. Kept across DDC failures: a monitor in standby still sits
-    /// on the same bus, and looking again would re-read every adapter's EDID
-    /// each poll. Dropped only when the device node itself fails to open.
+    /// Cached bus, kept for as long as the connector stays connected: bus
+    /// numbers belong to the port. Looking again after a failure would only
+    /// find the same bus, re-read every adapter's EDID, and log it each poll.
     bus: Option<u32>,
     /// Last (SL, SH) logged, so a mode is logged once, not every poll.
     mode: Option<(u8, u8)>,
@@ -98,18 +98,18 @@ fn identity(e: &Edid) -> String {
 
 /// Read the mode feature. `None` when the bus is busy or the read failed;
 /// failures are reported through `t`.
-fn read_mode(o: &Output, m: &Monitor, t: &mut Tracked) -> Option<ddc::Vcp> {
+fn read_mode(o: &Output, all: &[Output], m: &Monitor, t: &mut Tracked) -> Option<ddc::Vcp> {
     let conn = &o.connector;
     let n = match t.bus {
         Some(n) => n,
-        None => match drm::find_bus(o) {
+        None => match drm::find_bus(o, all) {
             Ok(BusLookup::Found(n)) => {
                 log::info!("{conn}: DDC/CI on /dev/i2c-{n}");
                 t.bus = Some(n);
                 n
             }
-            Ok(BusLookup::Busy) => {
-                log::debug!("{conn}: an I2C bus is locked by another process, skipping");
+            Ok(BusLookup::Busy(n)) => {
+                log::debug!("{conn}: /dev/i2c-{n} is locked by another process, skipping");
                 return None;
             }
             Ok(BusLookup::NotFound) => {
@@ -129,7 +129,6 @@ fn read_mode(o: &Output, m: &Monitor, t: &mut Tracked) -> Option<ddc::Vcp> {
             return None;
         }
         Err(e) => {
-            t.bus = None;
             t.fail(conn, format!("{e:#}"));
             return None;
         }
@@ -187,6 +186,8 @@ fn apply(
     };
     let profile = colord.profile(icc)?;
     if colord.default_profile(&device)?.as_ref() != Some(&profile) {
+        // At debug, so a second writer fighting over the default shows up.
+        log::debug!("{conn}: MakeProfileDefault {profile}");
         colord.make_default(&device, &profile)?;
     }
     // Logged on change of what we asked for, not on whether colord needed
@@ -202,34 +203,39 @@ fn apply(
 #[derive(Debug, Default)]
 struct State {
     tracked: BTreeMap<String, Tracked>,
-    /// Connected outputs no entry matches, logged once until they go away.
-    /// Without the line, a typo in `model` looks exactly like "unplugged".
-    ignored: BTreeSet<String>,
+    /// Connected outputs we do not drive, with the reason last logged; a
+    /// reason is logged once, and again only when it changes. Without the
+    /// line, a typo in `model` looks exactly like "unplugged".
+    ignored: BTreeMap<String, String>,
+}
+
+impl State {
+    fn ignore(&mut self, connector: &str, why: String) {
+        if self.ignored.get(connector) != Some(&why) {
+            log::info!("{connector}: {why}");
+            self.ignored.insert(connector.to_string(), why);
+        }
+    }
 }
 
 fn poll(cfg: &Config, colord: &Colord, st: &mut State) -> Result<()> {
     let outputs = drm::connected()?;
     st.ignored
-        .retain(|c| outputs.iter().any(|o| &o.connector == c));
+        .retain(|c, _| outputs.iter().any(|o| &o.connector == c));
     let mut present = Vec::new();
-    for o in outputs {
+    for o in &outputs {
         match edid::parse(&o.edid) {
             Ok(e) => match cfg.monitor_for(&e) {
                 Some(m) => {
                     st.ignored.remove(&o.connector);
                     present.push((o, e, m));
                 }
-                None => {
-                    if st.ignored.insert(o.connector.clone()) {
-                        log::info!("{}: {} matches no [[monitor]]", o.connector, identity(&e));
-                    }
-                }
+                None => st.ignore(
+                    &o.connector,
+                    format!("{} matches no [[monitor]]", identity(&e)),
+                ),
             },
-            Err(err) => {
-                if st.ignored.insert(o.connector.clone()) {
-                    log::warn!("{}: unreadable EDID: {err:#}", o.connector);
-                }
-            }
+            Err(err) => st.ignore(&o.connector, format!("unreadable EDID: {err:#}")),
         }
     }
 
@@ -267,7 +273,7 @@ fn poll(cfg: &Config, colord: &Colord, st: &mut State) -> Result<()> {
             log::info!("{}: {} {}", o.connector, m.vendor, m.model);
             Tracked::default()
         });
-        let Some(v) = read_mode(o, m, t) else {
+        let Some(v) = read_mode(o, &outputs, m, t) else {
             continue;
         };
         log::debug!("{}: {v:?}", o.connector);
@@ -303,7 +309,7 @@ fn probe(cfg: Option<&Config>) -> Result<()> {
     let mut out = String::new();
     let outputs = drm::connected()?;
     if outputs.is_empty() {
-        out.push_str("no connected output has an EDID\n");
+        out.push_str("no connected output\n");
     }
     for o in &outputs {
         let e = match edid::parse(&o.edid) {
@@ -316,9 +322,9 @@ fn probe(cfg: Option<&Config>) -> Result<()> {
         out.push_str(&format!("{}: {}\n", o.connector, identity(&e)));
         let m = cfg.and_then(|c| c.monitor_for(&e));
         let feature = m.map_or(0xdc, |m| m.feature);
-        let n = match drm::find_bus(o) {
+        let n = match drm::find_bus(o, &outputs) {
             Ok(BusLookup::Found(n)) => n,
-            Ok(BusLookup::Busy) => {
+            Ok(BusLookup::Busy(_)) => {
                 out.push_str("  bus:  locked by another process, try again\n");
                 continue;
             }
