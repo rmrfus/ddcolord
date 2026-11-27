@@ -43,9 +43,11 @@ service.
 - **Lock the bus with flock, non-blocking, like ddcutil.** A held lock means
   skip this poll; `ddcutil getvcp SCAN` holds it for tens of seconds, and a
   blocking wait would stall every monitor behind one bus.
-- **Check the feature code in the reply.** Monitors answer an unimplemented
-  VCP code with a copy of their previous reply; the code byte is the only
-  thing that exposes the copy.
+- **Only declared VCP features can be trusted, and the code cannot tell.**
+  Monitors may answer an unimplemented code with the values of their previous
+  reply; the PD3220U writes the requested code into the copy, so the code
+  check in ddc.rs passes it. A config `feature` must be one the monitor
+  declares (`ddcutil capabilities`).
 - **Probe EDID only on the GPU's own I2C adapters.** The SMBus controllers
   carry RAM SPD EEPROMs at the same 0x50.
 - **Rule out twin EDIDs from sysfs before probing, not from probe results.**

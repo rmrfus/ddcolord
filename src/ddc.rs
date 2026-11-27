@@ -1,9 +1,12 @@
 //! DDC/CI Get VCP Feature (VESA DDC/CI 1.1, section 4.3; MCCS 2.2).
 //!
-//! A monitor answers a VCP code it does not implement with a copy of its
-//! previous reply rather than an error (BenQ PD3220U, 2026-11-27), so the
-//! feature code echoed in the reply is checked against the one requested: a
-//! mismatch is exactly that stale copy.
+//! The reply's feature code is checked against the one requested, as the
+//! spec and ddcutil do. That does NOT catch the failure that matters most: a
+//! monitor may answer a code it does not implement with the values of its
+//! previous reply, and the BenQ PD3220U writes the requested code into that
+//! copy (2026-11-27: 0xFA read after 0x10 returned brightness, labelled 0xFA).
+//! Such a reply is indistinguishable from a real one, so only a feature the
+//! monitor declares in its capabilities string can be trusted.
 
 use std::thread::sleep;
 use std::time::Duration;
@@ -70,7 +73,7 @@ pub fn parse_reply(code: u8, r: &[u8; REPLY_LEN]) -> Result<Vcp> {
     }
     ensure!(
         r[4] == code,
-        "reply is for VCP {:#04x}, not {code:#04x} (a stale echo)",
+        "reply is for VCP {:#04x}, not {code:#04x}",
         r[4]
     );
     Ok(Vcp {
@@ -137,9 +140,9 @@ mod tests {
     }
 
     #[test]
-    fn an_echo_of_another_codes_reply_is_rejected() {
+    fn a_reply_labelled_with_another_code_is_rejected() {
         let err = parse_reply(0xdc, &reply(0x10, 0, 0x3f)).unwrap_err();
-        assert!(err.to_string().contains("stale echo"), "{err}");
+        assert!(err.to_string().contains("not 0xdc"), "{err}");
     }
 
     #[test]

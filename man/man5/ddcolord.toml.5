@@ -67,13 +67,14 @@ Used in logs and by
 ICC profile for this mode.
 A relative path is relative to the config file's directory.
 .SH NOTES
-Monitors may answer a VCP code they do not implement with a copy of their
-previous reply rather than an error.
-ddcolord rejects a reply whose feature code differs from the one it asked
-for, but a feature that is not declared in the monitor's capabilities
-string
-.RB ( "ddcutil capabilities" )
-should not be configured.
+Monitors may answer a VCP code they do not implement with the values of
+their previous reply rather than an error, and some (the BenQ PD3220U among
+them) label that copy with the requested code, so it cannot be told from a
+real reply.
+Set
+.B feature
+only to a code the monitor declares in its capabilities string
+.RB ( "ddcutil capabilities" ).
 .PP
 colord ships sRGB, Adobe RGB (1998) and Rec.709 profiles among others, but
 no Display P3 or DCI\-P3.
