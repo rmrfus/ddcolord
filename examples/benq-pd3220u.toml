@@ -1,0 +1,91 @@
+# ddcolord config for the BenQ PD3220U. See ddcolord.toml(5).
+#
+# The color mode is VCP 0xDC: SL holds the mode, SH the sub-mode (only Low
+# Blue Light has one). Codes mapped by hand against the OSD, MCCS 2.2 firmware.
+#
+# ICC paths below are colord's own profiles as NixOS links them into the
+# system profile. colord ships no Display P3 or DCI-P3 profile; the CC0
+# Compact ICC Profiles (https://github.com/saucecontrol/Compact-ICC-Profiles)
+# have both, as DisplayP3-v4.icc and DCI-P3-v4.icc.
+
+interval = 3
+
+[[monitor]]
+vendor = "BNQ"
+model = "BenQ PD3220U"
+# Modes with no icc of their own (and codes not listed) get this profile.
+# Remove the line to leave the previous profile in place instead.
+unmapped = "/run/current-system/sw/share/color/icc/colord/sRGB.icc"
+
+[[monitor.mode]]
+code = 0x0a
+name = "sRGB"
+icc = "/run/current-system/sw/share/color/icc/colord/sRGB.icc"
+
+[[monitor.mode]]
+code = 0x0c
+name = "Rec.709"
+icc = "/run/current-system/sw/share/color/icc/colord/Rec709.icc"
+
+[[monitor.mode]]
+code = 0x25
+name = "Adobe RGB"
+icc = "/run/current-system/sw/share/color/icc/colord/AdobeRGB1998.icc"
+
+[[monitor.mode]]
+code = 0x22
+name = "Display P3"
+# icc = "/path/to/DisplayP3-v4.icc"
+
+[[monitor.mode]]
+code = 0x21
+name = "DCI-P3"
+# icc = "/path/to/DCI-P3-v4.icc"
+
+[[monitor.mode]]
+code = 0x0f
+name = "M-book"
+
+[[monitor.mode]]
+code = 0x10
+name = "CAD/CAM"
+
+[[monitor.mode]]
+code = 0x12
+name = "User"
+
+[[monitor.mode]]
+code = 0x13
+sub = 0x01
+name = "Low Blue Light: Multimedia"
+
+[[monitor.mode]]
+code = 0x13
+sub = 0x02
+name = "Low Blue Light: Web Surfing"
+
+[[monitor.mode]]
+code = 0x13
+sub = 0x03
+name = "Low Blue Light: Office"
+
+[[monitor.mode]]
+code = 0x13
+sub = 0x04
+name = "Low Blue Light: Reading"
+
+[[monitor.mode]]
+code = 0x14
+name = "Animation"
+
+[[monitor.mode]]
+code = 0x20
+name = "Darkroom"
+
+[[monitor.mode]]
+code = 0x23
+name = "HDR"
+
+[[monitor.mode]]
+code = 0x24
+name = "DICOM"

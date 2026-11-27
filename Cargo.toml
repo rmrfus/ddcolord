@@ -1,0 +1,48 @@
+[package]
+name = "ddcolord"
+version = "0.1.0"
+edition = "2024"
+# File::try_lock (the flock ddcutil also takes) is 1.89.
+rust-version = "1.89"
+description = "Keep a colord display profile in step with the monitor's OSD color mode, read over DDC/CI"
+license = "MIT"
+repository = "https://github.com/rmrfus/ddcolord"
+homepage = "https://github.com/rmrfus/ddcolord"
+readme = "README.md"
+keywords = ["ddc", "colord", "icc", "monitor", "wayland"]
+categories = ["command-line-utilities"]
+exclude = [".github/"]
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+# Blocking libdbus binding. libdbus is AFL-2.1 OR GPL-2.0-or-later; taken
+# under AFL-2.1, so linking it keeps the binary MIT-distributable. zbus would
+# avoid the C library but brings its own executor thread and async stack.
+# stdfd: hand colord the ICC file as std OwnedFd, no unsafe from_raw_fd.
+dbus = { version = "0.9", features = ["stdfd"] }
+env_logger = "0.11"
+log = "0.4"
+# The I2C_RDWR ioctl on /dev/i2c-N.
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+toml = "1"
+
+# Restriction lints need explicit opt-in. CI promotes warnings to errors;
+# clippy.toml permits unwrap, expect and panic in tests.
+[lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+unreachable = "warn"
+todo = "warn"
+unimplemented = "warn"
+dbg_macro = "warn"
+exit = "warn"
+print_stdout = "warn"
+undocumented_unsafe_blocks = "warn"
+multiple_unsafe_ops_per_block = "warn"
+
+[profile.release]
+lto = true
+strip = true

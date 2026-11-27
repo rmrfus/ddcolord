@@ -1,0 +1,45 @@
+; Service template. Nix and make install replace ExecStart.
+; For manual installation, set the binary path and copy to
+; ~/.config/systemd/user/ddcolord.service. Create the config, then run:
+;   systemctl --user daemon-reload
+;   systemctl --user enable --now ddcolord
+
+[Unit]
+Description=Keep colord's display profile in step with the monitor's color mode
+Documentation=man:ddcolord(1) man:ddcolord.toml(5)
+; polkit lets colord's CreateDevice through for the user's active graphical
+; session, so start with that session, not at login.
+PartOf=graphical-session.target
+After=graphical-session.target
+; StartLimit* belong to [Unit]; systemd ignores them in [Service].
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+; READY=1 is sent after the config loads and the system bus connects.
+Type=notify
+; Installers replace this path; cargo install uses ~/.cargo/bin/ddcolord.
+ExecStart=%h/.local/bin/ddcolord
+
+; Losing the system bus exits non-zero on purpose; this brings it back.
+Restart=on-failure
+RestartSec=3
+
+; /dev/i2c-* must stay visible: no PrivateDevices.
+NoNewPrivileges=yes
+UMask=0077
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=graphical-session.target

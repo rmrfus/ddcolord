@@ -1,0 +1,111 @@
+.TH DDCOLORD 1 2026-11-27 "ddcolord 0.1.0" "User Commands"
+.SH NAME
+ddcolord \- keep colord's display profile in step with the monitor's color mode
+.SH SYNOPSIS
+.B ddcolord
+.RB [ \-c
+.IR path ]
+.RB [ \-\-check | \-\-probe ]
+.RB [ \-d ]
+.SH DESCRIPTION
+.B ddcolord
+polls a monitor's color mode (an OSD setting such as sRGB, Adobe RGB or
+Display P3) over DDC/CI and makes the matching ICC profile the default for
+that display in
+.BR colord (1).
+Applications that use the "system display profile" from colord, such as
+darktable, then follow the monitor.
+.PP
+Each connected output whose EDID matches a
+.B [[monitor]]
+entry in the config gets a colord display device with the metadata
+.BI XRANDR_name= connector
+(for example
+.BR DP\-2 ),
+which is how colord clients look a display up.
+Devices and profiles are created with colord's temporary scope: they
+disappear when
+.B ddcolord
+exits, so a stopped daemon leaves no stale profile behind.
+.PP
+The I2C bus is found through the connector's
+.B ddc
+link in sysfs where the driver provides one, and otherwise by reading the
+EDID on each I2C adapter of the same GPU and comparing it with the
+connector's.
+The bus is locked with
+.BR flock (2)
+around each exchange, the same lock
+.BR ddcutil (1)
+takes, so the two do not interleave; a bus locked by someone else is skipped
+until the next poll.
+.SH OPTIONS
+.TP
+.BR \-c ", " \-\-config " \fIpath\fR"
+Config file.
+Default:
+.IR $XDG_CONFIG_HOME/ddcolord/config.toml ,
+or
+.I ~/.config/ddcolord/config.toml
+when
+.B XDG_CONFIG_HOME
+is unset or not absolute.
+.TP
+.B \-\-check
+Load the config, check that every ICC file it names can be opened, and exit.
+.TP
+.B \-\-probe
+For each connected output, print its EDID vendor, model and serial (in the
+form the config wants), the I2C bus, the raw value of the color mode
+feature, and what the config maps it to.
+Works without a config.
+.TP
+.BR \-d ", " \-\-debug
+Log every poll.
+.TP
+.BR \-V ", " \-\-version
+Print the version.
+.TP
+.BR \-h ", " \-\-help
+Print help.
+.SH ENVIRONMENT
+.TP
+.B RUST_LOG
+Log filter, overriding the level chosen by
+.BR \-\-debug .
+.TP
+.B NOTIFY_SOCKET
+Set by systemd; readiness is reported once the config is loaded and the
+system bus is connected.
+.SH EXIT STATUS
+0 for
+.BR \-\-check " and " \-\-probe
+when they succeed, 1 on any error, 2 for a usage error.
+The daemon exits 1 when it loses the system bus, since its colord devices
+went with the connection.
+.SH FILES
+.TP
+.I /dev/i2c\-*
+Read and written for DDC/CI; the user needs access (on most distributions,
+membership in group
+.BR i2c ).
+.SH EXAMPLES
+Find what to put in the config:
+.PP
+.RS
+.nf
+ddcolord \-\-probe
+.fi
+.RE
+.PP
+See which profile colord hands out:
+.PP
+.RS
+.nf
+colormgr get\-devices
+.fi
+.RE
+.SH SEE ALSO
+.BR ddcolord.toml (5),
+.BR colormgr (1),
+.BR ddcutil (1)

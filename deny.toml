@@ -1,0 +1,10 @@
+# Run with cargo deny check advisories sources.
+
+[advisories]
+# Fail CI for withdrawn crate versions.
+yanked = "deny"
+
+[sources]
+# Require an explicit exception for new dependency sources.
+unknown-git = "deny"
+unknown-registry = "deny"

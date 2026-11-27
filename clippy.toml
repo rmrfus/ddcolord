@@ -1,0 +1,6 @@
+# Each lint has its own switch: allowing unwrap does not allow expect or panic.
+# These cover #[test] functions and #[cfg(test)] code, including integration tests.
+# Helpers outside those scopes need their own allow attributes.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true

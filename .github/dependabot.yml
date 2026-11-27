@@ -1,0 +1,17 @@
+# Pin actions to SHAs: tags are mutable (tj-actions compromise, CVE-2025-30066).
+# Dependabot updates the SHA pins and their version comments.
+# The MSRV workflow reads the toolchain version from Cargo.toml.
+# The pinned action revision can be updated independently.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  # Update Cargo.lock within the manifest version ranges.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      versioning-strategy: lockfile-only

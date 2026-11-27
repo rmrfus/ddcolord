@@ -1,0 +1,106 @@
+.TH DDCOLORD.TOML 5 2026-11-27 "ddcolord 0.1.0" "File Formats"
+.SH NAME
+ddcolord.toml \- ddcolord configuration
+.SH DESCRIPTION
+A TOML file mapping monitors, and the values of their color mode feature, to
+ICC profiles.
+Unknown keys are an error, so a misspelt key fails to load instead of being
+ignored.
+Every ICC file is opened at load time; a missing one is an error then, not
+at the first mode switch.
+.SH TOP LEVEL
+.TP
+.BR interval " (integer, default 3)"
+Seconds between polls.
+At least 1.
+.TP
+.B [[monitor]]
+One table per monitor model.
+The first entry that matches an output's EDID wins.
+.SH MONITOR
+.TP
+.BR vendor " (string, required)"
+EDID three-letter PNP manufacturer ID, for example
+.BR BNQ .
+.TP
+.BR model " (string, required)"
+EDID monitor name descriptor, for example
+.BR "BenQ PD3220U" .
+.TP
+.BR serial " (string)"
+EDID serial string.
+Only needed to give two identical monitors different tables; when unset,
+any serial matches.
+.TP
+.BR feature " (integer, default 0xdc)"
+VCP feature code that reports the color mode.
+MCCS calls 0xDC "Display Mode"; vendors fill its values with their own
+mode numbers.
+.TP
+.BR unmapped " (path)"
+Profile for a mode that has no
+.B icc
+of its own, and for a value not listed at all.
+When unset, such a mode leaves the current profile in place.
+.TP
+.B [[monitor.mode]]
+One table per mode.
+.SH MODE
+.TP
+.BR code " (integer, required)"
+Low byte (SL) of the feature's value.
+.TP
+.BR sub " (integer)"
+High byte (SH).
+An entry with
+.B sub
+matches only that value; one without matches any.
+The exact match wins when both exist.
+.TP
+.BR name " (string, required)"
+Used in logs and by
+.BR "ddcolord \-\-probe" .
+.TP
+.BR icc " (path)"
+ICC profile for this mode.
+A relative path is relative to the config file's directory.
+.SH NOTES
+Monitors may answer a VCP code they do not implement with a copy of their
+previous reply rather than an error.
+ddcolord rejects a reply whose feature code differs from the one it asked
+for, but a feature that is not declared in the monitor's capabilities
+string
+.RB ( "ddcutil capabilities" )
+should not be configured.
+.PP
+colord ships sRGB, Adobe RGB (1998) and Rec.709 profiles among others, but
+no Display P3 or DCI\-P3.
+.SH EXAMPLE
+.nf
+interval = 3
+
+[[monitor]]
+vendor = "BNQ"
+model = "BenQ PD3220U"
+unmapped = "/usr/share/color/icc/colord/sRGB.icc"
+
+[[monitor.mode]]
+code = 0x0a
+name = "sRGB"
+icc = "/usr/share/color/icc/colord/sRGB.icc"
+
+[[monitor.mode]]
+code = 0x25
+name = "Adobe RGB"
+icc = "/usr/share/color/icc/colord/AdobeRGB1998.icc"
+
+[[monitor.mode]]
+code = 0x13
+sub = 0x04
+name = "Low Blue Light: Reading"
+.fi
+.PP
+A complete table for the BenQ PD3220U ships as
+.IR examples/benq\-pd3220u.toml .
+.SH SEE ALSO
+.BR ddcolord (1)

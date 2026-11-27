@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Run the offline checks against the staged tree, not the working copy.
+# cargo deny (network) and nix build (minutes) stay in CI.
+set -Eeuo pipefail
+
+repo="$PWD"
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+
+git checkout-index --all --prefix="$work/"
+
+cd "$work"
+# Build into the repo's target/, or every commit is a cold build.
+CARGO_TARGET_DIR="$repo/target" nix develop "$repo" --command sh -c '
+  set -e
+  cargo fmt --all --check
+  cargo clippy --all-targets --locked --quiet -- -D warnings
+  cargo test --locked --quiet >/dev/null
+  for f in man/man1/ddcolord.1 man/man5/ddcolord.toml.5; do
+    groff -man -Tutf8 -ww -z "$f"
+  done
+  cargo machete >/dev/null
+' 2> >(grep -v "Git tree .* is dirty" >&2)

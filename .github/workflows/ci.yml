@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Check new advisories weekly. Accepted limit: GitHub disables schedules in
+  # public repos after 60 inactive days; workflow_dispatch allows manual runs.
+  schedule:
+    - cron: '41 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    # libdbus comes from the flake, the one place its version is pinned.
+    name: fmt · clippy · test · package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Format
+        run: nix develop --command cargo fmt --all --check
+
+      - name: Clippy
+        run: nix develop --command cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Test
+        run: nix develop --command cargo test --locked
+
+      - name: Man pages
+        run: |
+          nix develop --command groff -man -Tutf8 -ww -z man/man1/ddcolord.1
+          nix develop --command groff -man -Tutf8 -ww -z man/man5/ddcolord.toml.5
+
+      # advisories alone never reads [sources]; name both.
+      - name: Advisories and sources
+        run: nix develop --command cargo deny check advisories sources
+
+      - name: Unused dependencies
+        run: nix develop --command cargo machete
+
+      # nix flake check builds checks.* (the aarch64 cross build) but only
+      # evaluates packages.*.
+      - name: Cross-compile check
+        run: nix flake check
+
+      # Build and test the package in the Nix sandbox.
+      - name: Package
+        run: nix build
+
+  msrv:
+    name: rust-version floor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Read the floor from the manifest so there is no second copy to drift.
+      - name: Read the declared floor
+        id: floor
+        run: |
+          v=$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)
+          : "${v:?Cargo.toml declares no rust-version}"
+          echo "Cargo.toml declares rust-version $v"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: ${{ steps.floor.outputs.version }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      # libdbus-sys links the system libdbus through pkg-config.
+      - name: libdbus headers
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+
+      - name: Check on the declared floor
+        run: cargo check --all-targets --locked

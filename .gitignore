@@ -1,0 +1,8 @@
+/target
+/result
+
+# direnv cache of the dev shell.
+.direnv/
+
+*.swp
+*~
