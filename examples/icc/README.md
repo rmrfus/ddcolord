@@ -1,6 +1,7 @@
 # ICC profiles
 
-Generic profiles for the shipped example config, from
+Generic profiles for ddcolord's example config and the starter config it
+writes on first start (which copies this directory beside it), from
 [saucecontrol/Compact-ICC-Profiles](https://github.com/saucecontrol/Compact-ICC-Profiles)
 at commit `bdd84663061bc4ae95ca70decff54f581e27f702`, unmodified. They are
 CC0-1.0; see [LICENSE](LICENSE). A profile measured for your own monitor will

@@ -5,7 +5,8 @@ edition = "2024"
 # File::try_lock (the flock ddcutil also takes) is 1.89.
 rust-version = "1.89"
 description = "Keep a colord display profile in step with the monitor's OSD color mode, read over DDC/CI"
-# The code is MIT; the bundled ICC profiles in icc/ are CC0-1.0.
+# The code is MIT; the ICC profiles in examples/icc/, also embedded in the
+# binary, are CC0-1.0.
 license = "MIT AND CC0-1.0"
 repository = "https://github.com/rmrfus/ddcolord"
 homepage = "https://github.com/rmrfus/ddcolord"

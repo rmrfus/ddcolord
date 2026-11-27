@@ -387,18 +387,23 @@ fn write_starter(path: &std::path::Path) -> Result<()> {
     let refs: Vec<(&str, &Edid)> = parsed.iter().map(|(c, e)| (*c, e)).collect();
     let Some(text) = starter::render(&refs) else {
         bail!(
-            "no config at {}, and no connected monitor to write a starter for",
+            "no config at {}, and no connected monitor whose EDID names it \
+             to write a starter for (ddcolord --probe shows why)",
             path.display()
         );
     };
     starter::write(path, &text)?;
+    // Only outputs the starter has an entry for; the others are reported by
+    // the poll loop once it runs.
+    let covered: Vec<String> = refs
+        .iter()
+        .filter_map(|(c, e)| Some(format!("{c} ({} {})", e.vendor, e.name.as_deref()?)))
+        .collect();
     log::warn!(
-        "no config at {0}: wrote a starter for {1} and running with it; edit it and restart to apply changes (ddcolord.toml(5))",
+        "no config at {}: wrote a starter for {} and running with it; \
+         edit it and restart to apply changes (ddcolord.toml(5))",
         path.display(),
-        refs.iter()
-            .map(|(c, e)| format!("{c} ({} {})", e.vendor, e.name.as_deref().unwrap_or("?")))
-            .collect::<Vec<_>>()
-            .join(", ")
+        covered.join(", ")
     );
     Ok(())
 }
@@ -407,7 +412,7 @@ fn run(args: Args) -> Result<()> {
     let explicit = args.config.is_some();
     let path = config_path(args.config)?;
     if args.probe {
-        // Probing is how a config gets written, so a missing default is fine.
+        // Probing must work before any config exists, and never writes one.
         let cfg = if explicit || path.exists() {
             Some(Config::load(&path)?)
         } else {
@@ -415,7 +420,10 @@ fn run(args: Args) -> Result<()> {
         };
         return probe(cfg.as_ref());
     }
-    if !explicit && !path.exists() {
+    // symlink_metadata, not exists(): a dangling link (dotfiles pointing at
+    // a moved file) is a config the user has, and reading it should fail
+    // loudly rather than have a starter collide with it.
+    if !explicit && path.symlink_metadata().is_err() {
         if args.check {
             bail!(
                 "no config at {}; start ddcolord once and it writes a starter",

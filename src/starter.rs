@@ -57,18 +57,47 @@ const HEADER: &str = "\
 
 /// The starter text for these outputs (connector, EDID). `None` when no
 /// entry could match any of them: an EDID without a monitor name.
+///
+/// Two monitors of one model would get two identical entries, and the
+/// second would never apply (the first match wins). So a model connected
+/// more than once gets `serial` in each entry, and outputs whose identity is
+/// identical down to the serial share one entry: nothing can tell them apart.
 pub fn render(outputs: &[(&str, &Edid)]) -> Option<String> {
     let mut body = String::new();
+    let mut done: Vec<&Edid> = Vec::new();
     for (conn, e) in outputs {
         let Some(model) = &e.name else { continue };
+        if let Some(first) = done.iter().find(|d| ***d == **e) {
+            body.push_str(&format!(
+                "\n# {conn}: the same vendor, model and serial as an entry above \
+                 ({}), which covers it too.\n",
+                first.name.as_deref().unwrap_or("")
+            ));
+            continue;
+        }
+        let twins = outputs
+            .iter()
+            .filter(|(_, o)| o.vendor == e.vendor && o.name == e.name)
+            .count();
+        let serial = match (&e.serial, twins > 1) {
+            (Some(s), true) => format!("serial = {}\n", toml_string(s)),
+            _ => String::new(),
+        };
         body.push('\n');
         match table_for(e) {
             Some(table) => {
                 body.push_str(&format!("# {conn}: the shipped table for this monitor.\n"));
-                body.push_str(table);
+                // Keys of a table may come in any order; right after the header
+                // needs no knowledge of the table's own layout.
+                body.push_str(&table.replacen(
+                    "[[monitor]]\n",
+                    &format!("[[monitor]]\n{serial}"),
+                    1,
+                ));
             }
-            None => body.push_str(&skeleton(conn, &e.vendor, model)),
+            None => body.push_str(&skeleton(conn, &e.vendor, model, &serial)),
         }
+        done.push(e);
     }
     if body.is_empty() {
         return None;
@@ -86,7 +115,10 @@ fn table_for(e: &Edid) -> Option<&'static str> {
     })
 }
 
-fn skeleton(conn: &str, vendor: &str, model: &str) -> String {
+/// `feature` is written out, not left to its default: 0xDC is only a guess
+/// for a monitor nobody has looked at, and an undeclared code can answer with
+/// echoed values that look real (see ddc.rs).
+fn skeleton(conn: &str, vendor: &str, model: &str, serial: &str) -> String {
     format!(
         "# {conn}: no shipped table for this monitor. As it stands, the daemon logs
 # every OSD mode switch as \"color mode unlisted (sl=.. sh=..)\"; add a
@@ -94,6 +126,11 @@ fn skeleton(conn: &str, vendor: &str, model: &str) -> String {
 [[monitor]]
 vendor = {vendor}
 model = {model}
+{serial}# The VCP code that reports the color mode. 0xDC is the MCCS \"Display
+# Mode\" and only a guess for this monitor: check that `ddcutil capabilities`
+# lists it. An undeclared code may answer with stale values that look real,
+# or not move at all when you switch modes.
+feature = 0xdc
 # unmapped = \"icc/sRGB-v4.icc\"
 
 # [[monitor.mode]]
@@ -114,7 +151,9 @@ fn toml_string(s: &str) -> String {
 /// Write the bundled files missing from icc/ beside `path`, then the config.
 /// Directories are created 0700, files 0600.
 pub fn write(path: &Path, text: &str) -> Result<()> {
-    let dir = path.parent().unwrap_or(Path::new("."));
+    let dir = path
+        .parent()
+        .with_context(|| format!("{} has no parent directory", path.display()))?;
     let icc = dir.join("icc");
     DirBuilder::new()
         .recursive(true)
@@ -138,23 +177,43 @@ fn create_new(path: &Path, bytes: &[u8]) -> Result<bool> {
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(format!(".tmp{}", std::process::id()));
     let tmp = Path::new(&tmp);
-    let written = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(tmp)
-        .and_then(|mut f| f.write_all(bytes).and_then(|()| f.sync_all()))
-        .and_then(|()| fs::hard_link(tmp, path));
+    // Only the link may answer AlreadyExists for "the file is there": a temp
+    // left by a crashed run under a reused PID would otherwise read the same
+    // way and skip a file the config then names.
+    let linked = write_temp(tmp, bytes)
+        .with_context(|| format!("writing {}", tmp.display()))
+        .map(|()| fs::hard_link(tmp, path));
     if let Err(e) = fs::remove_file(tmp)
         && e.kind() != io::ErrorKind::NotFound
     {
         log::warn!("leaving {}: {e}", tmp.display());
     }
-    match written {
+    match linked? {
         Ok(()) => Ok(true),
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(false),
-        Err(e) => Err(e).with_context(|| format!("writing {}", path.display())),
+        Err(e) => Err(e).with_context(|| format!("linking {}", path.display())),
     }
+}
+
+/// A fresh 0600 file with `bytes`, synced. A stale temp of the same name is
+/// replaced: nothing but a dead run of ours writes that name.
+fn write_temp(tmp: &Path, bytes: &[u8]) -> io::Result<()> {
+    let open = || {
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(tmp)
+    };
+    let mut f = match open() {
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+            fs::remove_file(tmp)?;
+            open()?
+        }
+        other => other?,
+    };
+    f.write_all(bytes)?;
+    f.sync_all()
 }
 
 #[cfg(test)]
@@ -170,11 +229,63 @@ mod tests {
         }
     }
 
-    /// A fresh directory for one test, under the system temp dir.
+    /// A fresh directory for one test under the temp dir, its name not
+    /// guessable in advance (pid plus clock).
     fn scratch(name: &str) -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("ddcolord-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&d);
-        d
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or_default();
+        std::env::temp_dir().join(format!("ddcolord-{name}-{}-{nanos}", std::process::id()))
+    }
+
+    fn with_serial(serial: &str) -> Edid {
+        Edid {
+            serial: Some(serial.into()),
+            ..edid("BNQ", Some("BenQ PD3220U"))
+        }
+    }
+
+    #[test]
+    fn two_monitors_of_one_model_get_one_entry_each_told_apart_by_serial() {
+        let (a, b) = (with_serial("A1"), with_serial("B2"));
+        let text = render(&[("DP-2", &a), ("DP-3", &b)]).unwrap();
+        let c: Config = toml::from_str(&text).unwrap();
+        assert_eq!(c.monitor.len(), 2);
+        assert_eq!(c.monitor_for(&a).unwrap().serial.as_deref(), Some("A1"));
+        assert_eq!(c.monitor_for(&b).unwrap().serial.as_deref(), Some("B2"));
+    }
+
+    #[test]
+    fn monitors_identical_down_to_the_serial_share_one_entry() {
+        let a = with_serial("A1");
+        let text = render(&[("DP-2", &a), ("DP-3", &a)]).unwrap();
+        let c: Config = toml::from_str(&text).unwrap();
+        assert_eq!(c.monitor.len(), 1);
+        assert!(
+            text.contains("# DP-3: the same vendor, model and serial"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_skeleton_spells_out_the_feature_it_guesses() {
+        let text = render(&[("DP-1", &edid("XYZ", Some("M")))]).unwrap();
+        assert!(text.contains("\nfeature = 0xdc\n"), "{text}");
+        assert!(text.contains("ddcutil capabilities"), "{text}");
+    }
+
+    #[test]
+    fn a_stale_temp_from_a_dead_run_does_not_skip_the_file() {
+        let dir = scratch("stale");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("f");
+        let stale = dir.join(format!("f.tmp{}", std::process::id()));
+        fs::write(&stale, b"old").unwrap();
+        assert!(create_new(&path, b"new").unwrap());
+        assert_eq!(fs::read(&path).unwrap(), b"new");
+        assert!(!stale.exists());
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

@@ -1,8 +1,9 @@
 ; Service template. Nix and make install replace ExecStart.
 ; For manual installation, set the binary path and copy to
-; ~/.config/systemd/user/ddcolord.service. Create the config, then run:
+; ~/.config/systemd/user/ddcolord.service, then run:
 ;   systemctl --user daemon-reload
 ;   systemctl --user enable --now ddcolord
+; With no config, the first start writes a starter to ~/.config/ddcolord/.
 
 [Unit]
 Description=Keep colord's display profile in step with the monitor's color mode
