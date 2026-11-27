@@ -8,6 +8,7 @@ mod drm;
 mod edid;
 mod i2c;
 mod notify_ready;
+mod starter;
 
 use std::collections::BTreeMap;
 use std::io::{self, Write};
@@ -375,6 +376,33 @@ fn write_stdout(s: &str) -> Result<()> {
     }
 }
 
+/// First start: write a config for what is connected now, rather than make
+/// every new user go hunting for the format.
+fn write_starter(path: &std::path::Path) -> Result<()> {
+    let outputs = drm::connected()?;
+    let parsed: Vec<(&str, Edid)> = outputs
+        .iter()
+        .filter_map(|o| Some((o.connector.as_str(), edid::parse(&o.edid).ok()?)))
+        .collect();
+    let refs: Vec<(&str, &Edid)> = parsed.iter().map(|(c, e)| (*c, e)).collect();
+    let Some(text) = starter::render(&refs) else {
+        bail!(
+            "no config at {}, and no connected monitor to write a starter for",
+            path.display()
+        );
+    };
+    starter::write(path, &text)?;
+    log::warn!(
+        "no config at {0}: wrote a starter for {1} and running with it; edit it and restart to apply changes (ddcolord.toml(5))",
+        path.display(),
+        refs.iter()
+            .map(|(c, e)| format!("{c} ({} {})", e.vendor, e.name.as_deref().unwrap_or("?")))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    Ok(())
+}
+
 fn run(args: Args) -> Result<()> {
     let explicit = args.config.is_some();
     let path = config_path(args.config)?;
@@ -386,6 +414,15 @@ fn run(args: Args) -> Result<()> {
             None
         };
         return probe(cfg.as_ref());
+    }
+    if !explicit && !path.exists() {
+        if args.check {
+            bail!(
+                "no config at {}; start ddcolord once and it writes a starter",
+                path.display()
+            );
+        }
+        write_starter(&path)?;
     }
     let cfg = Config::load(&path)?;
     // Here and not in Config::load: --probe on a config still being written

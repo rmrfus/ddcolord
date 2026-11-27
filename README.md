@@ -37,11 +37,19 @@ No libddcutil: DDC/CI is spoken directly, which keeps the project MIT.
 
 ## Setup
 
-1. Find the monitor's identity and the raw value of its current mode:
+1. Start it once (`ddcolord`, or the service below). With no config at
+   `~/.config/ddcolord/config.toml` it writes one for the monitors connected
+   right now, copies the bundled profiles into `icc/` beside it, and keeps
+   running with it. It never overwrites either.
 
-   ```zsh
-   ddcolord --probe
-   ```
+   - A monitor ddcolord ships a table for (the BenQ PD3220U, see
+     [`examples/`](examples/)) gets the complete table and works at once.
+   - Any other monitor gets a skeleton entry with no modes. The daemon then
+     logs each OSD mode switch as `color mode unlisted (sl=0x.. sh=0x..)`;
+     add a `[[monitor.mode]]` for each mode you want a profile for, as
+     ddcolord.toml(5) describes, and restart.
+
+   `ddcolord --probe` shows the same identity and raw value on demand:
 
    ```
    DP-2: vendor = "BNQ"  model = "BenQ PD3220U"  serial = "..."
@@ -50,16 +58,10 @@ No libddcutil: DDC/CI is spoken directly, which keeps the project MIT.
      no [[monitor]] entry matches
    ```
 
-   Switch modes in the OSD and probe again to map each mode's `sl` (and `sh`
-   for sub-modes).
+   Only trust a feature the monitor declares in `ddcutil capabilities`; see
+   ddcolord.toml(5), NOTES. `ddcolord --check` validates an edited config.
 
-2. Write `~/.config/ddcolord/config.toml`; ddcolord.toml(5) describes every
-   key. [`examples/benq-pd3220u.toml`](examples/benq-pd3220u.toml) is a complete
-   table for the BenQ PD3220U; its ICC paths are relative to its own
-   directory, so a copy in `~/.config` needs absolute ones. Check it with
-   `ddcolord --check`.
-
-3. Run it as a user service:
+2. Run it as a user service:
 
    ```zsh
    make && sudo make install   # or: nix profile install 'github:rmrfus/ddcolord'
@@ -73,7 +75,7 @@ No libddcutil: DDC/CI is spoken directly, which keeps the project MIT.
    config, or similar), `--now` starts the service once and it does not come
    back at the next login.
 
-4. Check what colord hands out:
+3. Check what colord hands out:
 
    ```zsh
    colormgr get-devices
@@ -82,11 +84,12 @@ No libddcutil: DDC/CI is spoken directly, which keeps the project MIT.
 
 ## ICC profiles
 
-[`icc/`](icc/) holds generic CC0 profiles for sRGB, Rec.709, Adobe RGB (1998),
-Display P3 and DCI-P3 from
-[Compact ICC Profiles](https://github.com/saucecontrol/Compact-ICC-Profiles);
-they install to `<prefix>/share/ddcolord/icc/`, and the example config points
-at them. Its README says what each assumes: the Rec.709 and DCI-P3 ones may
+[`examples/icc/`](examples/icc/) holds generic CC0 profiles for sRGB, Rec.709,
+Adobe RGB (1998), Display P3 and DCI-P3 from
+[Compact ICC Profiles](https://github.com/saucecontrol/Compact-ICC-Profiles).
+They are built into the binary for the starter config, and installed to
+`<prefix>/share/ddcolord/examples/icc/` beside the example. Their README says
+what each assumes: the Rec.709 and DCI-P3 ones may
 not match the monitor modes of the same name. A profile measured for your own
 monitor is always the better choice.
 
@@ -98,4 +101,4 @@ event (a move, a resize, a view switch), not instantly.
 
 ## License
 
-MIT. The ICC profiles in `icc/` are CC0-1.0.
+MIT. The ICC profiles in `examples/icc/` are CC0-1.0.

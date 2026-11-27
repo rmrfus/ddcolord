@@ -28,10 +28,10 @@
           postInstall = ''
             install -Dm644 man/man1/ddcolord.1 $out/share/man/man1/ddcolord.1
             install -Dm644 man/man5/ddcolord.toml.5 $out/share/man/man5/ddcolord.toml.5
-            # Side by side, so the example's ../icc/ paths resolve in place.
+            # icc/ stays beside the example, so its icc/ paths resolve in place.
             install -Dm644 examples/benq-pd3220u.toml \
               $out/share/ddcolord/examples/benq-pd3220u.toml
-            install -Dm644 -t $out/share/ddcolord/icc icc/*.icc icc/LICENSE icc/README.md
+            install -Dm644 -t $out/share/ddcolord/examples/icc examples/icc/*
 
             # NixOS discovers units in lib; stdenv moves them to share and leaves a symlink.
             install -Dm644 systemd/ddcolord.service \

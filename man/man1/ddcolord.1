@@ -53,6 +53,17 @@ or
 when
 .B XDG_CONFIG_HOME
 is unset or not absolute.
+.IP
+When no
+.B \-c
+is given and the default file does not exist, the daemon writes a starter
+config for the monitors connected at that moment and runs with it: the
+shipped table for a monitor it has one for, a skeleton entry without modes
+otherwise.
+The bundled CC0 ICC profiles are copied into
+.I icc/
+beside it.
+Existing files are never overwritten.
 .TP
 .B \-\-check
 Load the config, check that it lists at least one monitor and that every
@@ -88,6 +99,13 @@ when they succeed, 1 on any error, 2 for a usage error.
 The daemon exits 1 when it loses the system bus, since its colord devices
 went with the connection.
 .SH FILES
+.TP
+.I ~/.config/ddcolord/config.toml
+The default config; see
+.BR ddcolord.toml (5).
+.TP
+.I ~/.config/ddcolord/icc/
+Profiles copied there with a starter config.
 .TP
 .I /dev/i2c\-*
 Read and written for DDC/CI; the user needs access (on most distributions,

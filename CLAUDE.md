@@ -23,10 +23,13 @@ service.
 - `i2c.rs` — `/dev/i2c-N`: flock + `I2C_RDWR`
 - `ddc.rs` — DDC/CI Get VCP request and reply
 - `colord.rs` — colord D-Bus calls
-- `examples/benq-pd3220u.toml` — the shipped monitor table; a test loads
-  it, so its `../icc/` paths must resolve
-- `icc/` — vendored CC0 profiles, unmodified, pinned commit and sha256 in its
-  README; installed beside `examples/` under `share/ddcolord/`
+- `starter.rs` — the first-start config: shipped table or skeleton, plus
+  the bundled profiles, written without ever overwriting
+- `examples/benq-pd3220u.toml` — the shipped monitor table, also embedded as
+  a starter table; tests load it, so its `icc/` paths must resolve
+- `examples/icc/` — vendored CC0 profiles, unmodified, pinned commit and
+  sha256 in its README; embedded in the binary and installed under
+  `share/ddcolord/examples/icc/`
 - `testdata/` — config test fixtures; `header-only.icc` is 128 bytes, zero
   but for the `acsp` signature
 - Hardware notes for the PD3220U: `/home/kuno/nixos/docs/benq-pd3220u-ddc.md`
@@ -66,6 +69,11 @@ service.
   half-built profile for a file it failed to parse, and FindProfileByFilename
   hands it back on the next poll, so a bad file would become a dead default
   that looks like success.
+- **The starter config copies the bundled profiles; it never points into
+  the install prefix.** On NixOS that is a store path, which an upgrade plus
+  a GC deletes under a config still naming it, and the daemon then refuses
+  to start. It also never overwrites a file, so a profile the user swapped
+  into icc/ survives.
 - **ICC paths are absolute before they reach colord.** colord matches a
   relative filename by basename, so `sRGB.icc` would bind colord's own copy.
 - **`XRANDR_name` is the connector name** (`DP-2`), not the model: colord-gtk

@@ -31,10 +31,10 @@ install:
 	$(INSTALL) -Dm755 $(BIN)                       $(DESTDIR)$(BINDIR)/ddcolord
 	$(INSTALL) -Dm644 man/man1/ddcolord.1          $(DESTDIR)$(MANDIR)/man1/ddcolord.1
 	$(INSTALL) -Dm644 man/man5/ddcolord.toml.5     $(DESTDIR)$(MANDIR)/man5/ddcolord.toml.5
-# Side by side, so the example's ../icc/ paths resolve in place.
+# icc/ stays beside the example, so its icc/ paths resolve in place.
 	$(INSTALL) -Dm644 examples/benq-pd3220u.toml   $(DESTDIR)$(DATADIR)/examples/benq-pd3220u.toml
-	$(INSTALL) -d $(DESTDIR)$(DATADIR)/icc
-	$(INSTALL) -m644 icc/*.icc icc/LICENSE icc/README.md $(DESTDIR)$(DATADIR)/icc/
+	$(INSTALL) -d $(DESTDIR)$(DATADIR)/examples/icc
+	$(INSTALL) -m644 examples/icc/*                $(DESTDIR)$(DATADIR)/examples/icc/
 	$(INSTALL) -d $(DESTDIR)$(UNITDIR)
 	sed -e 's|^ExecStart=.*|ExecStart=$(BINDIR)/ddcolord|' \
 	    systemd/ddcolord.service > $(DESTDIR)$(UNITDIR)/ddcolord.service
@@ -49,8 +49,8 @@ uninstall:
 	rm -f $(DESTDIR)$(MANDIR)/man1/ddcolord.1
 	rm -f $(DESTDIR)$(MANDIR)/man5/ddcolord.toml.5
 	rm -f $(DESTDIR)$(DATADIR)/examples/benq-pd3220u.toml
-	rm -f $(addprefix $(DESTDIR)$(DATADIR)/icc/,$(notdir $(wildcard icc/*)))
-	-rmdir $(DESTDIR)$(DATADIR)/examples $(DESTDIR)$(DATADIR)/icc $(DESTDIR)$(DATADIR)
+	rm -f $(addprefix $(DESTDIR)$(DATADIR)/examples/icc/,$(notdir $(wildcard examples/icc/*)))
+	-rmdir $(DESTDIR)$(DATADIR)/examples/icc $(DESTDIR)$(DATADIR)/examples $(DESTDIR)$(DATADIR)
 	rm -f $(DESTDIR)$(UNITDIR)/ddcolord.service
 
 clean:
