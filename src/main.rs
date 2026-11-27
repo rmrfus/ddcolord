@@ -413,7 +413,7 @@ fn run(args: Args) -> Result<()> {
     let path = config_path(args.config)?;
     if args.probe {
         // Probing must work before any config exists, and never writes one.
-        let cfg = if explicit || path.exists() {
+        let cfg = if explicit || path.symlink_metadata().is_ok() {
             Some(Config::load(&path)?)
         } else {
             None

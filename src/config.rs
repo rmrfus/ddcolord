@@ -94,7 +94,7 @@ impl Config {
         Ok(cfg)
     }
 
-    fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         ensure!(self.interval >= 1, "interval must be at least 1 second");
         for m in &self.monitor {
             ensure!(

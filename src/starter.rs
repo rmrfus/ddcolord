@@ -64,14 +64,21 @@ const HEADER: &str = "\
 /// identical down to the serial share one entry: nothing can tell them apart.
 pub fn render(outputs: &[(&str, &Edid)]) -> Option<String> {
     let mut body = String::new();
-    let mut done: Vec<&Edid> = Vec::new();
-    for (conn, e) in outputs {
+    // Entries with a serial first: one without matches any unit of its
+    // model, so placed earlier it would take its twin's output too.
+    let mut ordered = outputs.to_vec();
+    ordered.sort_by_key(|(_, e)| e.serial.is_none());
+    let mut done: Vec<(&str, &Edid)> = Vec::new();
+    for (conn, e) in &ordered {
         let Some(model) = &e.name else { continue };
-        if let Some(first) = done.iter().find(|d| ***d == **e) {
+        if let Some((first, _)) = done.iter().find(|(_, d)| **d == **e) {
+            let why = if e.serial.is_some() {
+                "the same vendor, model and serial"
+            } else {
+                "the same vendor and model, and no serial to tell them apart"
+            };
             body.push_str(&format!(
-                "\n# {conn}: the same vendor, model and serial as an entry above \
-                 ({}), which covers it too.\n",
-                first.name.as_deref().unwrap_or("")
+                "\n# {conn}: {why} as {first}, whose entry covers it too.\n"
             ));
             continue;
         }
@@ -97,7 +104,7 @@ pub fn render(outputs: &[(&str, &Edid)]) -> Option<String> {
             }
             None => body.push_str(&skeleton(conn, &e.vendor, model, &serial)),
         }
-        done.push(e);
+        done.push((conn, e));
     }
     if body.is_empty() {
         return None;
@@ -264,6 +271,42 @@ mod tests {
         assert_eq!(c.monitor.len(), 1);
         assert!(
             text.contains("# DP-3: the same vendor, model and serial"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_twin_without_a_serial_does_not_shadow_the_one_with_it_in_either_order() {
+        let none = Edid {
+            serial: None,
+            ..with_serial("unused")
+        };
+        let s = with_serial("S");
+        for outputs in [
+            [("DP-1", &none), ("DP-2", &s)],
+            [("DP-2", &s), ("DP-1", &none)],
+        ] {
+            let text = render(&outputs).unwrap();
+            let c: Config = toml::from_str(&text).unwrap();
+            c.validate().unwrap();
+            assert_eq!(c.monitor.len(), 2, "{text}");
+            assert_eq!(c.monitor_for(&s).unwrap().serial.as_deref(), Some("S"));
+            assert_eq!(c.monitor_for(&none).unwrap().serial, None);
+        }
+    }
+
+    #[test]
+    fn twins_without_serials_get_one_entry_that_loads() {
+        let none = Edid {
+            serial: None,
+            ..with_serial("unused")
+        };
+        let text = render(&[("DP-1", &none), ("DP-2", &none)]).unwrap();
+        let c: Config = toml::from_str(&text).unwrap();
+        c.validate().unwrap();
+        assert_eq!(c.monitor.len(), 1);
+        assert!(
+            text.contains("# DP-2: the same vendor and model, and no serial"),
             "{text}"
         );
     }

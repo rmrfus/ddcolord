@@ -45,10 +45,13 @@ pub fn parse(bytes: &[u8]) -> Result<Edid> {
         if d[..3] != [0, 0, 0] {
             continue;
         }
-        let text = descriptor_text(&d[5..]);
+        // A blank descriptor (all padding) is no descriptor: as Some("") it
+        // would become `serial = ""` in a starter config, which the config
+        // loader rightly rejects as matching nothing.
+        let text = Some(descriptor_text(&d[5..])).filter(|t| !t.is_empty());
         match d[3] {
-            0xfc => edid.name = Some(text),
-            0xff => edid.serial = Some(text),
+            0xfc => edid.name = text,
+            0xff => edid.serial = text,
             _ => {}
         }
     }
@@ -100,6 +103,12 @@ pub(crate) mod tests {
     fn a_thirteen_character_name_has_no_terminator_and_still_parses() {
         let e = parse(&synthetic("DEL", "DELL U2723QE1", "X")).unwrap();
         assert_eq!(e.name.as_deref(), Some("DELL U2723QE1"));
+    }
+
+    #[test]
+    fn a_blank_serial_descriptor_is_no_serial() {
+        let e = parse(&synthetic("BNQ", "BenQ PD3220U", "")).unwrap();
+        assert_eq!(e.serial, None);
     }
 
     #[test]
