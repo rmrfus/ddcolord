@@ -1,0 +1,6 @@
+# Loaded by config.rs tests through a relative path; the ICC path is relative
+# to this file's directory.
+[[monitor]]
+vendor = "TST"
+model = "Fixture"
+unmapped = "header-only.icc"

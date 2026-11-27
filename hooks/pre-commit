@@ -11,13 +11,15 @@ git checkout-index --all --prefix="$work/"
 
 cd "$work"
 # Build into the repo's target/, or every commit is a cold build.
+# Silent on success; on failure, the full output of the step that failed.
 CARGO_TARGET_DIR="$repo/target" nix develop "$repo" --command sh -c '
   set -e
+  quiet() { out=$("$@" 2>&1) || { printf "%s\n" "$out" >&2; return 1; }; }
   cargo fmt --all --check
   cargo clippy --all-targets --locked --quiet -- -D warnings
-  cargo test --locked --quiet >/dev/null
+  quiet cargo test --locked
   for f in man/man1/ddcolord.1 man/man5/ddcolord.toml.5; do
     groff -man -Tutf8 -ww -z "$f"
   done
-  cargo machete >/dev/null
+  quiet cargo machete
 ' 2> >(grep -v "Git tree .* is dirty" >&2)

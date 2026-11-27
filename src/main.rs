@@ -9,7 +9,7 @@ mod edid;
 mod i2c;
 mod notify_ready;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -48,10 +48,14 @@ struct Args {
 /// Per-output state that has to survive between polls.
 #[derive(Debug, Default)]
 struct Tracked {
-    /// Cached bus; dropped on any DDC failure so the next poll looks again.
+    /// Cached bus. Kept across DDC failures: a monitor in standby still sits
+    /// on the same bus, and looking again would re-read every adapter's EDID
+    /// each poll. Dropped only when the device node itself fails to open.
     bus: Option<u32>,
     /// Last (SL, SH) logged, so a mode is logged once, not every poll.
     mode: Option<(u8, u8)>,
+    /// Last profile logged.
+    profile: Option<PathBuf>,
     /// Last error logged, so a monitor asleep for an hour logs one line.
     error: Option<String>,
 }
@@ -78,16 +82,18 @@ fn config_path(arg: Option<PathBuf>) -> Result<PathBuf> {
     }
 }
 
-/// Connected outputs that a `[[monitor]]` entry matches.
-fn matched(cfg: &Config, outputs: Vec<Output>) -> Vec<(Output, Edid, &Monitor)> {
-    outputs
-        .into_iter()
-        .filter_map(|o| {
-            let e = edid::parse(&o.edid).ok()?;
-            let m = cfg.monitor_for(&e)?;
-            Some((o, e, m))
-        })
-        .collect()
+/// The EDID identity in the form a `[[monitor]]` entry wants. Absent
+/// descriptors are left out rather than printed as "", which would never match.
+fn identity(e: &Edid) -> String {
+    let mut s = format!("vendor = \"{}\"", e.vendor);
+    match &e.name {
+        Some(n) => s.push_str(&format!("  model = \"{n}\"")),
+        None => s.push_str("  (no monitor name in the EDID, so no entry can match it)"),
+    }
+    if let Some(serial) = &e.serial {
+        s.push_str(&format!("  serial = \"{serial}\""));
+    }
+    s
 }
 
 /// Read the mode feature. `None` when the bus is busy or the read failed;
@@ -97,33 +103,40 @@ fn read_mode(o: &Output, m: &Monitor, t: &mut Tracked) -> Option<ddc::Vcp> {
     let n = match t.bus {
         Some(n) => n,
         None => match drm::find_bus(o) {
-            BusLookup::Found(n) => {
+            Ok(BusLookup::Found(n)) => {
                 log::info!("{conn}: DDC/CI on /dev/i2c-{n}");
                 t.bus = Some(n);
                 n
             }
-            BusLookup::Busy => {
+            Ok(BusLookup::Busy) => {
                 log::debug!("{conn}: an I2C bus is locked by another process, skipping");
                 return None;
             }
-            BusLookup::NotFound => {
+            Ok(BusLookup::NotFound) => {
                 t.fail(conn, "no I2C bus returns this monitor's EDID".into());
+                return None;
+            }
+            Err(e) => {
+                t.fail(conn, format!("{e:#}"));
                 return None;
             }
         },
     };
-    let got = Bus::open(n).and_then(|bus| match bus {
-        Some(bus) => ddc::get_vcp(&bus, m.feature).map(Some),
-        None => Ok(None),
-    });
-    match got {
-        Ok(Some(v)) => Some(v),
+    let bus = match Bus::open(n) {
+        Ok(Some(bus)) => bus,
         Ok(None) => {
             log::debug!("{conn}: /dev/i2c-{n} is locked by another process, skipping");
-            None
+            return None;
         }
         Err(e) => {
             t.bus = None;
+            t.fail(conn, format!("{e:#}"));
+            return None;
+        }
+    };
+    match ddc::get_vcp(&bus, m.feature) {
+        Ok(v) => Some(v),
+        Err(e) => {
             t.fail(conn, format!("/dev/i2c-{n}: {e:#}"));
             None
         }
@@ -175,31 +188,82 @@ fn apply(
     let profile = colord.profile(icc)?;
     if colord.default_profile(&device)?.as_ref() != Some(&profile) {
         colord.make_default(&device, &profile)?;
+    }
+    // Logged on change of what we asked for, not on whether colord needed
+    // the call: colord re-applies remembered device-profile pairs from its
+    // mapping.db when a profile is created, so it is often already default.
+    if t.profile.as_deref() != Some(icc) {
         log::info!("{conn}: profile {}", icc.display());
+        t.profile = Some(icc.to_path_buf());
     }
     Ok(())
 }
 
-fn poll(cfg: &Config, colord: &Colord, tracked: &mut BTreeMap<String, Tracked>) -> Result<()> {
-    let present = matched(cfg, drm::connected()?);
+#[derive(Debug, Default)]
+struct State {
+    tracked: BTreeMap<String, Tracked>,
+    /// Connected outputs no entry matches, logged once until they go away.
+    /// Without the line, a typo in `model` looks exactly like "unplugged".
+    ignored: BTreeSet<String>,
+}
+
+fn poll(cfg: &Config, colord: &Colord, st: &mut State) -> Result<()> {
+    let outputs = drm::connected()?;
+    st.ignored
+        .retain(|c| outputs.iter().any(|o| &o.connector == c));
+    let mut present = Vec::new();
+    for o in outputs {
+        match edid::parse(&o.edid) {
+            Ok(e) => match cfg.monitor_for(&e) {
+                Some(m) => {
+                    st.ignored.remove(&o.connector);
+                    present.push((o, e, m));
+                }
+                None => {
+                    if st.ignored.insert(o.connector.clone()) {
+                        log::info!("{}: {} matches no [[monitor]]", o.connector, identity(&e));
+                    }
+                }
+            },
+            Err(err) => {
+                if st.ignored.insert(o.connector.clone()) {
+                    log::warn!("{}: unreadable EDID: {err:#}", o.connector);
+                }
+            }
+        }
+    }
 
     // Outputs that went away take their colord device with them, so nothing
-    // hands an application the profile of a monitor that is not there.
-    let gone: Vec<String> = tracked
+    // hands an application the profile of a monitor that is not there. The
+    // entry stays tracked until the delete succeeds, so a failed one is
+    // retried next poll.
+    let gone: Vec<String> = st
+        .tracked
         .keys()
         .filter(|c| !present.iter().any(|(o, _, _)| &o.connector == *c))
         .cloned()
         .collect();
     for conn in gone {
-        tracked.remove(&conn);
-        log::info!("{conn}: disconnected");
-        if let Some(d) = colord.device(&conn)? {
-            colord.delete_device(&d)?;
+        let deleted = colord.device(&conn).and_then(|d| match d {
+            Some(d) => colord.delete_device(&d),
+            None => Ok(()),
+        });
+        match deleted {
+            Ok(()) => {
+                st.tracked.remove(&conn);
+                log::info!("{conn}: disconnected");
+            }
+            Err(e) if colord::is_disconnect(&e) => return Err(e),
+            Err(e) => {
+                if let Some(t) = st.tracked.get_mut(&conn) {
+                    t.fail(&conn, format!("removing the colord device: {e:#}"));
+                }
+            }
         }
     }
 
     for (o, e, m) in &present {
-        let t = tracked.entry(o.connector.clone()).or_insert_with(|| {
+        let t = st.tracked.entry(o.connector.clone()).or_insert_with(|| {
             log::info!("{}: {} {}", o.connector, m.vendor, m.model);
             Tracked::default()
         });
@@ -217,17 +281,14 @@ fn poll(cfg: &Config, colord: &Colord, tracked: &mut BTreeMap<String, Tracked>) 
 }
 
 fn daemon(cfg: &Config) -> Result<()> {
-    if cfg.monitor.is_empty() {
-        bail!("the config lists no [[monitor]]; see ddcolord.toml(5)");
-    }
     let colord = Colord::connect()?;
-    let mut tracked = BTreeMap::new();
+    let mut st = State::default();
     notify_ready::ready();
     log::info!("polling every {}s", cfg.interval);
     loop {
         // A lost bus connection would also have taken our temp devices with
         // it; exiting lets systemd restart us onto a fresh one.
-        if let Err(e) = poll(cfg, &colord, &mut tracked) {
+        if let Err(e) = poll(cfg, &colord, &mut st) {
             if colord::is_disconnect(&e) {
                 return Err(e.context("lost the system bus"));
             }
@@ -252,48 +313,43 @@ fn probe(cfg: Option<&Config>) -> Result<()> {
                 continue;
             }
         };
-        out.push_str(&format!(
-            "{}: vendor = \"{}\"  model = \"{}\"  serial = \"{}\"\n",
-            o.connector,
-            e.vendor,
-            e.name.as_deref().unwrap_or(""),
-            e.serial.as_deref().unwrap_or(""),
-        ));
+        out.push_str(&format!("{}: {}\n", o.connector, identity(&e)));
         let m = cfg.and_then(|c| c.monitor_for(&e));
         let feature = m.map_or(0xdc, |m| m.feature);
         let n = match drm::find_bus(o) {
-            BusLookup::Found(n) => n,
-            BusLookup::Busy => {
+            Ok(BusLookup::Found(n)) => n,
+            Ok(BusLookup::Busy) => {
                 out.push_str("  bus:  locked by another process, try again\n");
                 continue;
             }
-            BusLookup::NotFound => {
+            Ok(BusLookup::NotFound) => {
                 out.push_str("  bus:  none returns this EDID\n");
+                continue;
+            }
+            Err(err) => {
+                out.push_str(&format!("  bus:  {err:#}\n"));
                 continue;
             }
         };
         out.push_str(&format!("  bus:  /dev/i2c-{n}\n"));
-        let v = match Bus::open(n)? {
+        let v = Bus::open(n).and_then(|bus| match bus {
             Some(bus) => ddc::get_vcp(&bus, feature),
-            None => Err(anyhow::anyhow!("locked by another process, try again")),
-        };
-        match v {
-            Ok(v) => out.push_str(&format!(
-                "  {feature:#04x}: mh={:#04x} ml={:#04x} sh={:#04x} sl={:#04x}\n",
-                v.mh, v.ml, v.sh, v.sl
-            )),
+            None => bail!("locked by another process, try again"),
+        });
+        let v = match v {
+            Ok(v) => v,
             Err(err) => {
                 out.push_str(&format!("  {feature:#04x}: {err:#}\n"));
                 continue;
             }
-        }
+        };
+        out.push_str(&format!(
+            "  {feature:#04x}: mh={:#04x} ml={:#04x} sh={:#04x} sl={:#04x}\n",
+            v.mh, v.ml, v.sh, v.sl
+        ));
         let Some(m) = m else {
             out.push_str("  no [[monitor]] entry matches\n");
             continue;
-        };
-        let v = match v {
-            Ok(v) => v,
-            Err(_) => continue,
         };
         let name = m.mode(v.sl, v.sh).map_or("unlisted", |mode| &mode.name);
         let profile = match m.choice(v.sl, v.sh) {
@@ -326,6 +382,14 @@ fn run(args: Args) -> Result<()> {
         return probe(cfg.as_ref());
     }
     let cfg = Config::load(&path)?;
+    // Here and not in Config::load: --probe on a config still being written
+    // is fine, but --check must fail on what the daemon would refuse.
+    if cfg.monitor.is_empty() {
+        bail!(
+            "{} lists no [[monitor]]; see ddcolord.toml(5)",
+            path.display()
+        );
+    }
     log::info!(
         "loaded {} monitor(s) from {}",
         cfg.monitor.len(),

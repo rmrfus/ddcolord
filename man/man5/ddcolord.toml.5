@@ -6,8 +6,9 @@ A TOML file mapping monitors, and the values of their color mode feature, to
 ICC profiles.
 Unknown keys are an error, so a misspelt key fails to load instead of being
 ignored.
-Every ICC file is opened at load time; a missing one is an error then, not
-at the first mode switch.
+Every ICC file is read at load time and must carry the ICC signature; a
+missing file, or one that is not an ICC profile, is an error then, not at
+the first mode switch.
 .SH TOP LEVEL
 .TP
 .BR interval " (integer, default 3)"
@@ -26,9 +27,10 @@ EDID three-letter PNP manufacturer ID, for example
 .BR model " (string, required)"
 EDID monitor name descriptor, for example
 .BR "BenQ PD3220U" .
+A monitor whose EDID has no name descriptor cannot be matched.
 .TP
 .BR serial " (string)"
-EDID serial string.
+EDID serial string, not empty.
 Only needed to give two identical monitors different tables; when unset,
 any serial matches.
 .TP

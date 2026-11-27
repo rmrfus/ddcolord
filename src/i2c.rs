@@ -47,11 +47,19 @@ impl Bus {
     /// the lock.
     pub fn open(n: u32) -> Result<Option<Bus>> {
         let path = format!("/dev/i2c-{n}");
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&path)
-            .with_context(|| format!("opening {path}"))?;
+        let file = match OpenOptions::new().read(true).write(true).open(&path) {
+            Ok(f) => f,
+            // The two setup mistakes; say which knob fixes them.
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                return Err(e).with_context(|| format!("opening {path} (is i2c-dev loaded?)"));
+            }
+            Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
+                return Err(e).with_context(|| {
+                    format!("opening {path} (needs read/write access, usually group i2c)")
+                });
+            }
+            Err(e) => return Err(e).with_context(|| format!("opening {path}")),
+        };
         match file.try_lock() {
             Ok(()) => Ok(Some(Bus { file })),
             Err(TryLockError::WouldBlock) => Ok(None),

@@ -13,7 +13,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 
 use crate::edid;
 use crate::i2c::{Bus, Op};
@@ -71,23 +71,36 @@ pub fn connected() -> Result<Vec<Output>> {
     Ok(out)
 }
 
-pub fn find_bus(out: &Output) -> BusLookup {
+/// An error is a setup problem (no access to /dev/i2c-N, i2c-dev not loaded,
+/// identical EDIDs on two buses), never "nothing on this port": an adapter
+/// with no monitor behind it is just not a match.
+pub fn find_bus(out: &Output) -> Result<BusLookup> {
     if let Some(n) = linked_bus(&out.sysfs) {
-        return BusLookup::Found(n);
+        return Ok(BusLookup::Found(n));
     }
     let mut busy = false;
+    let mut found = Vec::new();
     for n in sibling_buses(&out.sysfs) {
-        match edid_matches(n, &out.edid) {
-            Ok(Some(true)) => return BusLookup::Found(n),
-            Ok(Some(false)) => {}
-            Ok(None) => busy = true,
-            Err(e) => log::debug!("{}: i2c-{n}: {e:#}", out.connector),
+        match edid_matches(n, &out.edid)? {
+            Some(true) => found.push(n),
+            Some(false) => {}
+            None => busy = true,
         }
     }
-    if busy {
-        BusLookup::Busy
-    } else {
-        BusLookup::NotFound
+    // A locked bus might be a second match, so a lookup that skipped one
+    // decides nothing.
+    match found.as_slice() {
+        _ if busy => Ok(BusLookup::Busy),
+        [] => Ok(BusLookup::NotFound),
+        [n] => Ok(BusLookup::Found(*n)),
+        many => bail!(
+            "this EDID answers on {}; identical monitors without serial numbers \
+             cannot be told apart",
+            many.iter()
+                .map(|n| format!("i2c-{n}"))
+                .collect::<Vec<_>>()
+                .join(" and ")
+        ),
     }
 }
 
@@ -132,13 +145,16 @@ fn sibling_buses(sysfs: &Path) -> Vec<u32> {
     buses
 }
 
-/// `None` when the bus is locked by someone else.
+/// `None` when the bus is locked by someone else. Failing to open the bus is
+/// an error; failing to read an EDID on it only means no monitor is there.
 fn edid_matches(n: u32, want: &[u8]) -> Result<Option<bool>> {
     let Some(bus) = Bus::open(n)? else {
         return Ok(None);
     };
     let mut got = [0u8; edid::BASE_LEN];
-    bus.transfer(EDID_ADDR, &mut [Op::Write(&[0]), Op::Read(&mut got)])
-        .with_context(|| format!("reading EDID at {EDID_ADDR:#04x}"))?;
+    if let Err(e) = bus.transfer(EDID_ADDR, &mut [Op::Write(&[0]), Op::Read(&mut got)]) {
+        log::debug!("i2c-{n}: no EDID at {EDID_ADDR:#04x}: {e}");
+        return Ok(Some(false));
+    }
     Ok(Some(want.get(..edid::BASE_LEN) == Some(&got[..])))
 }

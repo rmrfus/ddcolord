@@ -65,6 +65,12 @@ No libddcutil: DDC/CI is spoken directly, which keeps the project MIT.
    systemctl --user enable --now ddcolord
    ```
 
+   The unit is `WantedBy=graphical-session.target`. Upstream sway does not
+   start that target; without something that does (uwsm, home-manager's sway
+   module, a `systemctl --user start graphical-session.target` in the sway
+   config, or similar), `--now` starts the service once and it does not come
+   back at the next login.
+
 4. Check what colord hands out:
 
    ```zsh

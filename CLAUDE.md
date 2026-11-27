@@ -10,7 +10,9 @@ service.
 - `nix develop --command cargo test --locked`
 - `nix develop --command cargo clippy --all-targets --locked -- -D warnings`
 - `git config core.hooksPath hooks` once per clone
-- Live check: `cargo run -- --probe`, then `colormgr get-devices`
+- Live check: `cargo run -- --probe` reads EDID, bus and mode without
+  touching colord; `colormgr get-devices` shows a `ddcolord-<connector>`
+  device only while the daemon runs
 
 ## Layout
 
@@ -21,7 +23,10 @@ service.
 - `i2c.rs` — `/dev/i2c-N`: flock + `I2C_RDWR`
 - `ddc.rs` — DDC/CI Get VCP request and reply
 - `colord.rs` — colord D-Bus calls
-- `examples/benq-pd3220u.toml` — the shipped monitor table; a test loads it
+- `examples/benq-pd3220u.toml` — the shipped monitor table; a test parses
+  and validates it (its ICC paths do not exist in the build sandbox)
+- `testdata/` — config test fixtures; `header-only.icc` is 128 bytes, zero
+  but for the `acsp` signature
 - Hardware notes for the PD3220U: `/home/kuno/nixos/docs/benq-pd3220u-ddc.md`
 
 ## Non-negotiables
@@ -43,6 +48,16 @@ service.
   thing that exposes the copy.
 - **Probe EDID only on the GPU's own I2C adapters.** The SMBus controllers
   carry RAM SPD EEPROMs at the same 0x50.
+- **`Monitor` and `Mode` carry `deny_unknown_fields` but no container-level
+  `#[serde(default)]`,** against the rust skill's rule. Their identity fields
+  are required: with a container default, a missing `vendor` or `model`
+  becomes "" and silently matches no monitor, ever.
+- **ICC files are checked for the `acsp` signature at load.** colord keeps a
+  half-built profile for a file it failed to parse, and FindProfileByFilename
+  hands it back on the next poll, so a bad file would become a dead default
+  that looks like success.
+- **ICC paths are absolute before they reach colord.** colord matches a
+  relative filename by basename, so `sRGB.icc` would bind colord's own copy.
 - **`XRANDR_name` is the connector name** (`DP-2`), not the model: colord-gtk
   looks displays up by it.
 - **`rust-version` and the MSRV CI job:** the job reads the floor from

@@ -2,6 +2,7 @@
 //! their color modes. See ddcolord.toml(5).
 
 use std::collections::HashSet;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail, ensure};
@@ -83,17 +84,28 @@ impl Config {
             std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         let mut cfg: Config =
             toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
-        let base = path.parent().unwrap_or(Path::new("."));
-        cfg.resolve(base)?;
+        cfg.validate()?;
+        // Absolute, or `-c config.toml` leaves the ICC paths relative too, and
+        // colord matches a relative filename by basename alone: `sRGB.icc`
+        // would bind colord's own sRGB.icc instead of the user's file.
+        let abs =
+            std::path::absolute(path).with_context(|| format!("resolving {}", path.display()))?;
+        cfg.resolve(abs.parent().unwrap_or(Path::new("/")))?;
         Ok(cfg)
     }
 
-    /// Relative ICC paths are relative to the config file; every profile must
-    /// be readable now, not at the first mode switch an hour later.
-    fn resolve(&mut self, base: &Path) -> Result<()> {
+    fn validate(&self) -> Result<()> {
         ensure!(self.interval >= 1, "interval must be at least 1 second");
-        for m in &mut self.monitor {
+        for m in &self.monitor {
+            ensure!(
+                !m.vendor.is_empty() && !m.model.is_empty(),
+                "a [[monitor]] has an empty vendor or model, which no EDID matches"
+            );
             let label = format!("monitor {} {}", m.vendor, m.model);
+            ensure!(
+                m.serial.as_deref() != Some(""),
+                "{label}: serial = \"\" matches no EDID; remove the key to match any serial"
+            );
             let mut seen = HashSet::new();
             for mode in &m.mode {
                 ensure!(
@@ -103,6 +115,15 @@ impl Config {
                     mode.sub
                 );
             }
+        }
+        Ok(())
+    }
+
+    /// Relative ICC paths are relative to the config file's directory; every
+    /// profile must check out now, not at the first mode switch an hour later.
+    fn resolve(&mut self, base: &Path) -> Result<()> {
+        for m in &mut self.monitor {
+            let label = format!("monitor {} {}", m.vendor, m.model);
             let icc = m
                 .mode
                 .iter_mut()
@@ -112,8 +133,7 @@ impl Config {
                 if p.is_relative() {
                     *p = base.join(&*p);
                 }
-                std::fs::File::open(&*p)
-                    .with_context(|| format!("{label}: ICC profile {}", p.display()))?;
+                check_icc(p).with_context(|| format!("{label}: ICC profile {}", p.display()))?;
             }
         }
         Ok(())
@@ -145,6 +165,23 @@ impl Monitor {
     }
 }
 
+/// The ICC header carries the signature `acsp` at byte 36 (ICC.1:2022, 7.2.9).
+/// Opening the file is not enough: a directory opens, and so does an HTML
+/// page saved from a GitHub "blob" URL. colord then fails to parse it, but
+/// keeps a half-built profile under that filename which FindProfileByFilename
+/// returns on the next poll, so the failure would turn into a dead default.
+fn check_icc(path: &Path) -> Result<()> {
+    let mut header = [0u8; 40];
+    std::fs::File::open(path)
+        .and_then(|mut f| f.read_exact(&mut header))
+        .context("reading the header")?;
+    ensure!(
+        &header[36..] == b"acsp",
+        "not an ICC profile (no 'acsp' signature)"
+    );
+    Ok(())
+}
+
 /// $XDG_CONFIG_HOME/ddcolord/config.toml, with the XDG fallback to ~/.config.
 pub fn default_path() -> Result<PathBuf> {
     let xdg = std::env::var_os("XDG_CONFIG_HOME")
@@ -164,13 +201,20 @@ pub fn default_path() -> Result<PathBuf> {
 mod tests {
     use super::*;
 
+    fn testdata() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata")
+    }
+
+    /// Parse, validate and resolve as `load` does, against testdata/.
     fn cfg(text: &str) -> Result<Config> {
         let mut c: Config = toml::from_str(text)?;
-        c.resolve(Path::new("/"))?;
+        c.validate()?;
+        c.resolve(&testdata())?;
         Ok(c)
     }
 
-    const ICC: &str = "/dev/null";
+    /// 128 bytes, zero but for the `acsp` signature.
+    const ICC: &str = "header-only.icc";
 
     #[test]
     fn exact_sub_mode_wins_over_the_catch_all() {
@@ -207,14 +251,9 @@ mod tests {
         "#
         );
         let c = cfg(&text).unwrap();
-        assert_eq!(
-            c.monitor[0].choice(0x20, 0),
-            Choice::Profile(Path::new(ICC))
-        );
-        assert_eq!(
-            c.monitor[0].choice(0x99, 0),
-            Choice::Profile(Path::new(ICC))
-        );
+        let icc = testdata().join(ICC);
+        assert_eq!(c.monitor[0].choice(0x20, 0), Choice::Profile(&icc));
+        assert_eq!(c.monitor[0].choice(0x99, 0), Choice::Profile(&icc));
 
         let c = cfg(r#"
             [[monitor]]
@@ -290,11 +329,46 @@ mod tests {
         assert!(c.monitor_for(&e("A")).unwrap().serial.is_none());
     }
 
+    /// The ICC files it names are system paths that do not exist in the
+    /// build sandbox, so this stops short of resolve().
     #[test]
-    fn the_shipped_example_loads() {
+    fn the_shipped_example_parses_and_validates() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/benq-pd3220u.toml");
         let text = std::fs::read_to_string(path).unwrap();
         let c: Config = toml::from_str(&text).unwrap();
+        c.validate().unwrap();
         assert!(!c.monitor[0].mode.is_empty());
+    }
+
+    #[test]
+    fn a_relative_config_path_still_yields_absolute_icc_paths() {
+        // cargo runs unit tests from the package root, so this path is
+        // relative exactly the way `ddcolord -c config.toml` is.
+        let c = Config::load(Path::new("testdata/relative.toml")).unwrap();
+        let icc = c.monitor[0].unmapped.as_deref().unwrap();
+        assert!(icc.is_absolute(), "{}", icc.display());
+        assert!(
+            icc.ends_with("testdata/header-only.icc"),
+            "{}",
+            icc.display()
+        );
+    }
+
+    #[test]
+    fn a_file_that_is_not_an_icc_profile_fails_at_load() {
+        assert!(check_icc(&testdata().join(ICC)).is_ok());
+        assert!(check_icc(&testdata().join("relative.toml")).is_err());
+        assert!(check_icc(&testdata()).is_err());
+    }
+
+    #[test]
+    fn an_empty_serial_is_rejected_because_it_matches_nothing() {
+        let err = cfg("[[monitor]]\nvendor = \"X\"\nmodel = \"Y\"\nserial = \"\"").unwrap_err();
+        assert!(err.to_string().contains("serial"), "{err}");
+    }
+
+    #[test]
+    fn an_empty_model_is_rejected() {
+        assert!(cfg("[[monitor]]\nvendor = \"X\"\nmodel = \"\"").is_err());
     }
 }

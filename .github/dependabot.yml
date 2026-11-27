@@ -12,6 +12,7 @@ updates:
   # Update Cargo.lock within the manifest version ranges.
   - package-ecosystem: cargo
     directory: /
+    # A key of the update entry; under schedule it is not an option at all.
+    versioning-strategy: lockfile-only
     schedule:
       interval: weekly
-      versioning-strategy: lockfile-only
