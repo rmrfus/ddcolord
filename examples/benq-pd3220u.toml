@@ -3,10 +3,11 @@
 # The color mode is VCP 0xDC: SL holds the mode, SH the sub-mode (only Low
 # Blue Light has one). Codes mapped by hand against the OSD, MCCS 2.2 firmware.
 #
-# ICC paths below are colord's own profiles as NixOS links them into the
-# system profile. colord ships no Display P3 or DCI-P3 profile; the CC0
-# Compact ICC Profiles (https://github.com/saucecontrol/Compact-ICC-Profiles)
-# have both, as DisplayP3-v4.icc and DCI-P3-v4.icc.
+# The profiles are the generic CC0 ones shipped in ../icc/ (see its README for
+# what each assumes). Relative paths resolve against this file's directory,
+# so they work from a checkout and from <prefix>/share/ddcolord/examples/.
+# A copy elsewhere needs absolute paths, ideally to profiles measured for the
+# monitor itself.
 
 interval = 3
 
@@ -15,32 +16,34 @@ vendor = "BNQ"
 model = "BenQ PD3220U"
 # Modes with no icc of their own (and codes not listed) get this profile.
 # Remove the line to leave the previous profile in place instead.
-unmapped = "/run/current-system/sw/share/color/icc/colord/sRGB.icc"
+unmapped = "../icc/sRGB-v4.icc"
 
 [[monitor.mode]]
 code = 0x0a
 name = "sRGB"
-icc = "/run/current-system/sw/share/color/icc/colord/sRGB.icc"
+icc = "../icc/sRGB-v4.icc"
 
 [[monitor.mode]]
 code = 0x0c
 name = "Rec.709"
-icc = "/run/current-system/sw/share/color/icc/colord/Rec709.icc"
+# Rec. 709 camera curve; the monitor's mode is likely BT.1886 (gamma 2.4).
+icc = "../icc/Rec709-v4.icc"
 
 [[monitor.mode]]
 code = 0x25
 name = "Adobe RGB"
-icc = "/run/current-system/sw/share/color/icc/colord/AdobeRGB1998.icc"
+icc = "../icc/AdobeCompat-v4.icc"
 
 [[monitor.mode]]
 code = 0x22
 name = "Display P3"
-# icc = "/path/to/DisplayP3-v4.icc"
+icc = "../icc/DisplayP3-v4.icc"
 
 [[monitor.mode]]
 code = 0x21
 name = "DCI-P3"
-# icc = "/path/to/DCI-P3-v4.icc"
+# Theatrical DCI-P3 (DCI white, gamma 2.6); not verified against this mode.
+icc = "../icc/DCI-P3-v4.icc"
 
 [[monitor.mode]]
 code = 0x0f

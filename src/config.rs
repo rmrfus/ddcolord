@@ -329,15 +329,19 @@ mod tests {
         assert!(c.monitor_for(&e("A")).unwrap().serial.is_none());
     }
 
-    /// The ICC files it names are system paths that do not exist in the
-    /// build sandbox, so this stops short of resolve().
+    /// Loads it the way the daemon does, so every bundled profile in icc/ it
+    /// points at must exist and carry the ICC signature.
     #[test]
-    fn the_shipped_example_parses_and_validates() {
+    fn the_shipped_example_loads_with_its_bundled_profiles() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/benq-pd3220u.toml");
-        let text = std::fs::read_to_string(path).unwrap();
-        let c: Config = toml::from_str(&text).unwrap();
-        c.validate().unwrap();
-        assert!(!c.monitor[0].mode.is_empty());
+        let c = Config::load(&path).unwrap();
+        let m = &c.monitor[0];
+        let Choice::Profile(p3) = m.choice(0x22, 0) else {
+            panic!("Display P3 should map to a profile");
+        };
+        assert!(p3.ends_with("icc/DisplayP3-v4.icc"), "{}", p3.display());
+        // Darkroom has no profile of its own and falls back to unmapped.
+        assert_eq!(m.choice(0x20, 0), m.choice(0x0a, 0));
     }
 
     #[test]

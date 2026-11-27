@@ -23,8 +23,10 @@ service.
 - `i2c.rs` — `/dev/i2c-N`: flock + `I2C_RDWR`
 - `ddc.rs` — DDC/CI Get VCP request and reply
 - `colord.rs` — colord D-Bus calls
-- `examples/benq-pd3220u.toml` — the shipped monitor table; a test parses
-  and validates it (its ICC paths do not exist in the build sandbox)
+- `examples/benq-pd3220u.toml` — the shipped monitor table; a test loads
+  it, so its `../icc/` paths must resolve
+- `icc/` — vendored CC0 profiles, unmodified, pinned commit and sha256 in its
+  README; installed beside `examples/` under `share/ddcolord/`
 - `testdata/` — config test fixtures; `header-only.icc` is 128 bytes, zero
   but for the `acsp` signature
 - Hardware notes for the PD3220U: `/home/kuno/nixos/docs/benq-pd3220u-ddc.md`

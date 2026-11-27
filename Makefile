@@ -3,7 +3,7 @@
 PREFIX  ?= /usr/local
 BINDIR  ?= $(PREFIX)/bin
 MANDIR  ?= $(PREFIX)/share/man
-DOCDIR  ?= $(PREFIX)/share/doc/ddcolord
+DATADIR ?= $(PREFIX)/share/ddcolord
 
 # systemd searches share/systemd/user for home installs and
 # lib/systemd/user under /usr and /usr/local; see systemd.unit(5).
@@ -31,7 +31,10 @@ install:
 	$(INSTALL) -Dm755 $(BIN)                       $(DESTDIR)$(BINDIR)/ddcolord
 	$(INSTALL) -Dm644 man/man1/ddcolord.1          $(DESTDIR)$(MANDIR)/man1/ddcolord.1
 	$(INSTALL) -Dm644 man/man5/ddcolord.toml.5     $(DESTDIR)$(MANDIR)/man5/ddcolord.toml.5
-	$(INSTALL) -Dm644 examples/benq-pd3220u.toml   $(DESTDIR)$(DOCDIR)/examples/benq-pd3220u.toml
+# Side by side, so the example's ../icc/ paths resolve in place.
+	$(INSTALL) -Dm644 examples/benq-pd3220u.toml   $(DESTDIR)$(DATADIR)/examples/benq-pd3220u.toml
+	$(INSTALL) -d $(DESTDIR)$(DATADIR)/icc
+	$(INSTALL) -m644 icc/*.icc icc/LICENSE icc/README.md $(DESTDIR)$(DATADIR)/icc/
 	$(INSTALL) -d $(DESTDIR)$(UNITDIR)
 	sed -e 's|^ExecStart=.*|ExecStart=$(BINDIR)/ddcolord|' \
 	    systemd/ddcolord.service > $(DESTDIR)$(UNITDIR)/ddcolord.service
@@ -45,7 +48,9 @@ uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/ddcolord
 	rm -f $(DESTDIR)$(MANDIR)/man1/ddcolord.1
 	rm -f $(DESTDIR)$(MANDIR)/man5/ddcolord.toml.5
-	rm -f $(DESTDIR)$(DOCDIR)/examples/benq-pd3220u.toml
+	rm -f $(DESTDIR)$(DATADIR)/examples/benq-pd3220u.toml
+	rm -f $(addprefix $(DESTDIR)$(DATADIR)/icc/,$(notdir $(wildcard icc/*)))
+	-rmdir $(DESTDIR)$(DATADIR)/examples $(DESTDIR)$(DATADIR)/icc $(DESTDIR)$(DATADIR)
 	rm -f $(DESTDIR)$(UNITDIR)/ddcolord.service
 
 clean:
@@ -56,5 +61,5 @@ show:
 	@echo 'PREFIX  = $(PREFIX)'
 	@echo 'BINDIR  = $(BINDIR)'
 	@echo 'MANDIR  = $(MANDIR)'
-	@echo 'DOCDIR  = $(DOCDIR)'
+	@echo 'DATADIR = $(DATADIR)'
 	@echo 'UNITDIR = $(UNITDIR)'

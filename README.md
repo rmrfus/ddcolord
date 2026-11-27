@@ -55,7 +55,9 @@ No libddcutil: DDC/CI is spoken directly, which keeps the project MIT.
 
 2. Write `~/.config/ddcolord/config.toml`; ddcolord.toml(5) describes every
    key. [`examples/benq-pd3220u.toml`](examples/benq-pd3220u.toml) is a complete
-   table for the BenQ PD3220U. Check it with `ddcolord --check`.
+   table for the BenQ PD3220U; its ICC paths are relative to its own
+   directory, so a copy in `~/.config` needs absolute ones. Check it with
+   `ddcolord --check`.
 
 3. Run it as a user service:
 
@@ -80,10 +82,13 @@ No libddcutil: DDC/CI is spoken directly, which keeps the project MIT.
 
 ## ICC profiles
 
-colord ships sRGB, Adobe RGB (1998) and Rec.709 among others, under
-`share/color/icc/colord/`. It ships no Display P3 or DCI-P3 profile; the
-[Compact ICC Profiles](https://github.com/saucecontrol/Compact-ICC-Profiles)
-(CC0) have both, as `DisplayP3-v4.icc` and `DCI-P3-v4.icc`.
+[`icc/`](icc/) holds generic CC0 profiles for sRGB, Rec.709, Adobe RGB (1998),
+Display P3 and DCI-P3 from
+[Compact ICC Profiles](https://github.com/saucecontrol/Compact-ICC-Profiles);
+they install to `<prefix>/share/ddcolord/icc/`, and the example config points
+at them. Its README says what each assumes: the Rec.709 and DCI-P3 ones may
+not match the monitor modes of the same name. A profile measured for your own
+monitor is always the better choice.
 
 ## darktable
 
@@ -93,4 +98,4 @@ event (a move, a resize, a view switch), not instantly.
 
 ## License
 
-MIT
+MIT. The ICC profiles in `icc/` are CC0-1.0.

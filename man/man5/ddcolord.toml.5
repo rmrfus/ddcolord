@@ -76,8 +76,11 @@ Set
 only to a code the monitor declares in its capabilities string
 .RB ( "ddcutil capabilities" ).
 .PP
-colord ships sRGB, Adobe RGB (1998) and Rec.709 profiles among others, but
-no Display P3 or DCI\-P3.
+Generic CC0 profiles for sRGB, Rec.709, Adobe RGB (1998), Display P3 and
+DCI\-P3 are installed in
+.IR <prefix>/share/ddcolord/icc/ ;
+its README says what each assumes.
+A profile measured for the monitor itself is always the better choice.
 .SH EXAMPLE
 .nf
 interval = 3
@@ -85,17 +88,17 @@ interval = 3
 [[monitor]]
 vendor = "BNQ"
 model = "BenQ PD3220U"
-unmapped = "/usr/share/color/icc/colord/sRGB.icc"
+unmapped = "/usr/share/ddcolord/icc/sRGB-v4.icc"
 
 [[monitor.mode]]
 code = 0x0a
 name = "sRGB"
-icc = "/usr/share/color/icc/colord/sRGB.icc"
+icc = "/usr/share/ddcolord/icc/sRGB-v4.icc"
 
 [[monitor.mode]]
 code = 0x25
 name = "Adobe RGB"
-icc = "/usr/share/color/icc/colord/AdobeRGB1998.icc"
+icc = "/usr/share/ddcolord/icc/AdobeCompat-v4.icc"
 
 [[monitor.mode]]
 code = 0x13
@@ -103,7 +106,9 @@ sub = 0x04
 name = "Low Blue Light: Reading"
 .fi
 .PP
-A complete table for the BenQ PD3220U ships as
-.IR examples/benq\-pd3220u.toml .
+A complete table for the BenQ PD3220U is installed as
+.IR <prefix>/share/ddcolord/examples/benq\-pd3220u.toml ,
+with paths relative to it into
+.IR ../icc/ .
 .SH SEE ALSO
 .BR ddcolord (1)
