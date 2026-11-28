@@ -33,6 +33,9 @@ pub type Obj = ObjPath<'static>;
 
 /// What colord is told about a display.
 pub struct Display<'a> {
+    /// The output's sysfs name, for the device ID.
+    pub output: &'a str,
+    /// The connector name, for `XRANDR_name`.
     pub connector: &'a str,
     pub vendor: &'a str,
     pub model: &'a str,
@@ -50,8 +53,10 @@ pub fn is_disconnect(e: &anyhow::Error) -> bool {
         .any(|d| d.name() == Some(DISCONNECTED))
 }
 
-pub fn device_id(connector: &str) -> String {
-    format!("ddcolord-{connector}")
+/// From the sysfs name (`ddcolord-card1-DP-2`), not the connector, which
+/// two GPUs can share.
+pub fn device_id(output: &str) -> String {
+    format!("ddcolord-{output}")
 }
 
 impl Colord {
@@ -77,8 +82,8 @@ impl Colord {
         }
     }
 
-    pub fn device(&self, connector: &str) -> Result<Option<Obj>> {
-        let id = device_id(connector);
+    pub fn device(&self, output: &str) -> Result<Option<Obj>> {
+        let id = device_id(output);
         let got = self
             .manager()
             .method_call(MANAGER, "FindDeviceById", (id.as_str(),));
@@ -105,7 +110,7 @@ impl Colord {
         if let Some(s) = d.serial {
             props.insert("Serial", s);
         }
-        let id = device_id(d.connector);
+        let id = device_id(d.output);
         let (path,): (Obj,) = self
             .manager()
             .method_call(MANAGER, "CreateDevice", (id.as_str(), "temp", props))

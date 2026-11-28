@@ -55,7 +55,7 @@ const HEADER: &str = "\
 # measured for your own monitor is better.
 ";
 
-/// The starter text for these outputs (connector, EDID). `None` when no
+/// The starter text for these outputs (output name, EDID). `None` when no
 /// entry could match any of them: an EDID without a monitor name.
 ///
 /// Two monitors of one model would get two identical entries, and the

@@ -62,16 +62,16 @@ struct Tracked {
 }
 
 impl Tracked {
-    fn fail(&mut self, connector: &str, msg: String) {
+    fn fail(&mut self, output: &str, msg: String) {
         if self.error.as_ref() != Some(&msg) {
-            log::warn!("{connector}: {msg}");
+            log::warn!("{output}: {msg}");
             self.error = Some(msg);
         }
     }
 
-    fn ok(&mut self, connector: &str) {
+    fn ok(&mut self, output: &str) {
         if self.error.take().is_some() {
-            log::info!("{connector}: recovered");
+            log::info!("{output}: recovered");
         }
     }
 }
@@ -100,7 +100,7 @@ fn identity(e: &Edid) -> String {
 /// Read the mode feature. `None` when the bus is busy or the read failed;
 /// failures are reported through `t`.
 fn read_mode(o: &Output, all: &[Output], m: &Monitor, t: &mut Tracked) -> Option<ddc::Vcp> {
-    let conn = &o.connector;
+    let conn = &o.name;
     let n = match t.bus {
         Some(n) => n,
         None => match drm::find_bus(o, all) {
@@ -152,7 +152,7 @@ fn apply(
     v: ddc::Vcp,
     t: &mut Tracked,
 ) -> Result<()> {
-    let conn = &o.connector;
+    let conn = &o.name;
     if t.mode != Some((v.sl, v.sh)) {
         let name = m.mode(v.sl, v.sh).map_or("unlisted", |mode| &mode.name);
         log::info!(
@@ -169,14 +169,16 @@ fn apply(
     let device = match colord.device(conn)? {
         Some(d) => d,
         None => {
-            if let Some(other) = colord.device_for_xrandr(conn)? {
+            if let Some(other) = colord.device_for_xrandr(&o.connector)? {
                 log::warn!(
-                    "{conn}: colord already has {other} for XRANDR_name={conn}; \
-                     applications may be handed that one instead"
+                    "{conn}: colord already has {other} for XRANDR_name={}; \
+                     applications may be handed that one instead",
+                    o.connector
                 );
             }
             let d = colord.create_device(&colord::Display {
-                connector: conn,
+                output: conn,
+                connector: &o.connector,
                 vendor: &e.vendor,
                 model: e.name.as_deref().unwrap_or(&m.model),
                 serial: e.serial.as_deref(),
@@ -211,10 +213,10 @@ struct State {
 }
 
 impl State {
-    fn ignore(&mut self, connector: &str, why: String) {
-        if self.ignored.get(connector) != Some(&why) {
-            log::info!("{connector}: {why}");
-            self.ignored.insert(connector.to_string(), why);
+    fn ignore(&mut self, output: &str, why: String) {
+        if self.ignored.get(output) != Some(&why) {
+            log::info!("{output}: {why}");
+            self.ignored.insert(output.to_string(), why);
         }
     }
 }
@@ -222,21 +224,18 @@ impl State {
 fn poll(cfg: &Config, colord: &Colord, st: &mut State) -> Result<()> {
     let outputs = drm::connected()?;
     st.ignored
-        .retain(|c, _| outputs.iter().any(|o| &o.connector == c));
+        .retain(|n, _| outputs.iter().any(|o| &o.name == n));
     let mut present = Vec::new();
     for o in &outputs {
         match edid::parse(&o.edid) {
             Ok(e) => match cfg.monitor_for(&e) {
                 Some(m) => {
-                    st.ignored.remove(&o.connector);
+                    st.ignored.remove(&o.name);
                     present.push((o, e, m));
                 }
-                None => st.ignore(
-                    &o.connector,
-                    format!("{} matches no [[monitor]]", identity(&e)),
-                ),
+                None => st.ignore(&o.name, format!("{} matches no [[monitor]]", identity(&e))),
             },
-            Err(err) => st.ignore(&o.connector, format!("unreadable EDID: {err:#}")),
+            Err(err) => st.ignore(&o.name, format!("unreadable EDID: {err:#}")),
         }
     }
 
@@ -247,7 +246,7 @@ fn poll(cfg: &Config, colord: &Colord, st: &mut State) -> Result<()> {
     let gone: Vec<String> = st
         .tracked
         .keys()
-        .filter(|c| !present.iter().any(|(o, _, _)| &o.connector == *c))
+        .filter(|n| !present.iter().any(|(o, _, _)| &o.name == *n))
         .cloned()
         .collect();
     for conn in gone {
@@ -270,18 +269,18 @@ fn poll(cfg: &Config, colord: &Colord, st: &mut State) -> Result<()> {
     }
 
     for (o, e, m) in &present {
-        let t = st.tracked.entry(o.connector.clone()).or_insert_with(|| {
-            log::info!("{}: {} {}", o.connector, m.vendor, m.model);
+        let t = st.tracked.entry(o.name.clone()).or_insert_with(|| {
+            log::info!("{}: {} {}", o.name, m.vendor, m.model);
             Tracked::default()
         });
         let Some(v) = read_mode(o, &outputs, m, t) else {
             continue;
         };
-        log::debug!("{}: {v:?}", o.connector);
+        log::debug!("{}: {v:?}", o.name);
         match apply(colord, o, e, m, v, t) {
-            Ok(()) => t.ok(&o.connector),
+            Ok(()) => t.ok(&o.name),
             Err(err) if colord::is_disconnect(&err) => return Err(err),
-            Err(err) => t.fail(&o.connector, format!("{err:#}")),
+            Err(err) => t.fail(&o.name, format!("{err:#}")),
         }
     }
     Ok(())
@@ -316,11 +315,11 @@ fn probe(cfg: Option<&Config>) -> Result<()> {
         let e = match edid::parse(&o.edid) {
             Ok(e) => e,
             Err(err) => {
-                out.push_str(&format!("{}: unreadable EDID: {err:#}\n", o.connector));
+                out.push_str(&format!("{}: unreadable EDID: {err:#}\n", o.name));
                 continue;
             }
         };
-        out.push_str(&format!("{}: {}\n", o.connector, identity(&e)));
+        out.push_str(&format!("{}: {}\n", o.name, identity(&e)));
         let m = cfg.and_then(|c| c.monitor_for(&e));
         let feature = m.map_or(0xdc, |m| m.feature);
         let n = match drm::find_bus(o, &outputs) {
@@ -382,7 +381,7 @@ fn write_starter(path: &std::path::Path) -> Result<()> {
     let outputs = drm::connected()?;
     let parsed: Vec<(&str, Edid)> = outputs
         .iter()
-        .filter_map(|o| Some((o.connector.as_str(), edid::parse(&o.edid).ok()?)))
+        .filter_map(|o| Some((o.name.as_str(), edid::parse(&o.edid).ok()?)))
         .collect();
     let refs: Vec<(&str, &Edid)> = parsed.iter().map(|(c, e)| (*c, e)).collect();
     let Some(text) = starter::render(&refs) else {

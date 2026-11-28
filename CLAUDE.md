@@ -11,7 +11,7 @@ service.
 - `nix develop --command cargo clippy --all-targets --locked -- -D warnings`
 - `git config core.hooksPath hooks` once per clone
 - Live check: `cargo run -- --probe` reads EDID, bus and mode without
-  touching colord; `colormgr get-devices` shows a `ddcolord-<connector>`
+  touching colord; `colormgr get-devices` shows a `ddcolord-card1-DP-2`
   device only while the daemon runs
 
 ## Layout
@@ -80,7 +80,10 @@ service.
 - **ICC paths are absolute before they reach colord.** colord matches a
   relative filename by basename, so `sRGB.icc` would bind colord's own copy.
 - **`XRANDR_name` is the connector name** (`DP-2`), not the model: colord-gtk
-  looks displays up by it.
+  looks displays up by it. **Everything else per output is keyed by the
+  sysfs name** (`card1-DP-2`): state, logs, the colord device ID. Two GPUs
+  can each have a `DP-1`, and keyed by connector their monitors would share
+  one bus and one device.
 - **`rust-version` and the MSRV CI job:** the job reads the floor from
   Cargo.toml, so raising it needs no second edit — but re-run clippy after a
   raise, it gates suggestions on the floor.

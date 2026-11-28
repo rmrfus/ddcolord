@@ -52,7 +52,7 @@ No libddcutil: DDC/CI is spoken directly, which keeps the project MIT.
    `ddcolord --probe` shows the same identity and raw value on demand:
 
    ```
-   DP-2: vendor = "BNQ"  model = "BenQ PD3220U"  serial = "..."
+   card1-DP-2: vendor = "BNQ"  model = "BenQ PD3220U"  serial = "..."
      bus:  /dev/i2c-3
      0xdc: mh=0x04 ml=0x24 sh=0x00 sl=0x0a
      no [[monitor]] entry matches

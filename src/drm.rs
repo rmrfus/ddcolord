@@ -1,7 +1,9 @@
 //! Connected DRM outputs, and the I2C bus that reaches each one's monitor.
 //!
-//! The connector name in sysfs (`card1-DP-2` → `DP-2`) is the name sway uses
-//! for the output and the `XRANDR_name` colord clients look a display up by.
+//! An output is known by its sysfs name (`card1-DP-2`), which is unique; the
+//! connector part (`DP-2`) is the name sway uses for the output and the
+//! `XRANDR_name` colord clients look a display up by, and two GPUs can each
+//! have a `DP-1`.
 //!
 //! amdgpu and i915 link the connector to its bus (`ddc`, or an `i2c-N`
 //! child). NVIDIA's proprietary driver links nothing: its adapters hang off
@@ -22,6 +24,10 @@ const EDID_ADDR: u16 = 0x50;
 
 #[derive(Debug, Clone)]
 pub struct Output {
+    /// The sysfs entry, `card1-DP-2`: unique among outputs, so it keys
+    /// everything per output and names it in logs.
+    pub name: String,
+    /// `DP-2`, which another card can have too.
     pub connector: String,
     sysfs: PathBuf,
     pub edid: Vec<u8>,
@@ -63,12 +69,13 @@ pub fn connected() -> Result<Vec<Output>> {
         }
         let edid = fs::read(sysfs.join("edid")).unwrap_or_default();
         out.push(Output {
+            name: name.to_string(),
             connector: connector.to_string(),
             sysfs,
             edid,
         });
     }
-    out.sort_by(|a, b| a.connector.cmp(&b.connector));
+    out.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(out)
 }
 
@@ -88,14 +95,12 @@ pub fn find_bus(out: &Output, all: &[Output]) -> Result<BusLookup> {
     // cannot do it, because one failed read on the twin's bus would leave a
     // single "match" and bind this output to the other monitor for good.
     if let Some(twin) = all.iter().find(|o| {
-        o.connector != out.connector
-            && o.edid.get(..edid::BASE_LEN) == Some(base)
-            && gpu_of(&o.sysfs) == gpu
+        o.name != out.name && o.edid.get(..edid::BASE_LEN) == Some(base) && gpu_of(&o.sysfs) == gpu
     }) {
         bail!(
             "{} has a byte-identical EDID, and this driver does not link \
              connectors to I2C buses, so the two cannot be told apart",
-            twin.connector
+            twin.name
         );
     }
     let Some(gpu) = gpu else {
