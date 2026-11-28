@@ -92,7 +92,8 @@ Log filter, overriding the level chosen by
 .TP
 .B NOTIFY_SOCKET
 Set by systemd; readiness is reported once the config is loaded and the
-system bus is connected.
+system bus is connected, or, on a first start, once the daemon starts
+waiting for a monitor to write a starter config for.
 .SH EXIT STATUS
 0 for
 .BR \-\-check " and " \-\-probe

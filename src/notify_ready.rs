@@ -1,4 +1,6 @@
-//! Send systemd readiness once the config is loaded and colord is reachable.
+//! Send systemd readiness once the config is loaded and colord is reachable,
+//! or on a first start once the daemon waits for a monitor to write a
+//! starter config for: systemd fails a start that stays unready too long.
 //! The sd_notify(3) protocol uses one datagram sent to NOTIFY_SOCKET.
 
 use std::os::linux::net::SocketAddrExt;

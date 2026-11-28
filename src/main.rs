@@ -414,6 +414,11 @@ fn write_stdout(s: &str) -> Result<()> {
 fn write_starter(path: &std::path::Path) -> Result<()> {
     let mut waiting = false;
     loop {
+        // Written while we waited, by hand or by a home-manager switch.
+        if path.symlink_metadata().is_ok() {
+            log::info!("{} appeared; using it", path.display());
+            return Ok(());
+        }
         let outputs = drm::connected()?;
         let parsed: Vec<(&str, Edid)> = outputs
             .iter()

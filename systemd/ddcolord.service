@@ -17,7 +17,8 @@ StartLimitIntervalSec=60
 StartLimitBurst=5
 
 [Service]
-; READY=1 is sent after the config loads and the system bus connects.
+; READY=1 is sent after the config loads and the system bus connects, or on
+; a first start once it waits for a monitor to write a starter for.
 Type=notify
 ; Installers replace this path; cargo install uses ~/.cargo/bin/ddcolord.
 ExecStart=%h/.local/bin/ddcolord

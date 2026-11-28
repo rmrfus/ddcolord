@@ -40,8 +40,9 @@ No libddcutil: DDC/CI is spoken directly, which keeps the project MIT.
 1. Start it once (`ddcolord`, or the service below). With no config at
    `~/.config/ddcolord/config.toml` it writes one for the monitors connected
    right now, copies the bundled profiles into `icc/` beside it, and keeps
-   running with it. It never overwrites either. With no monitor connected
-   yet, it waits for one.
+   running with it. It never overwrites either. With no connected monitor
+   whose EDID names it (none yet, or an EDID without a monitor name), it
+   waits for one; `ddcolord --probe` shows which.
 
    - A monitor ddcolord ships a table for (the BenQ PD3220U, see
      [`examples/`](examples/)) gets the complete table and works at once.
