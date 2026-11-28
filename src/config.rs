@@ -439,6 +439,29 @@ mod tests {
         assert!(check_icc_data(&b).is_ok());
     }
 
+    /// open(2) on a FIFO blocks until a writer appears, so the check has to
+    /// refuse it before opening; on a deadline, since failing means hanging.
+    #[test]
+    fn a_fifo_is_refused_without_waiting_for_a_writer() {
+        use std::os::unix::ffi::OsStrExt;
+        let path = std::env::temp_dir().join(format!("ddcolord-fifo-{}.icc", std::process::id()));
+        let c = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+        // SAFETY: `c` is a NUL-terminated path that outlives the call.
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let p = path.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(check_icc(&p).is_err());
+        });
+        let refused = rx.recv_timeout(std::time::Duration::from_secs(5));
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(
+            refused,
+            Ok(true),
+            "check_icc blocked on a FIFO or accepted it"
+        );
+    }
+
     #[test]
     fn an_empty_serial_is_rejected_because_it_matches_nothing() {
         let err = cfg("[[monitor]]\nvendor = \"X\"\nmodel = \"Y\"\nserial = \"\"").unwrap_err();

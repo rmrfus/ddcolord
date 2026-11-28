@@ -31,12 +31,9 @@ RestartSec=3
 NoNewPrivileges=yes
 UMask=0077
 PrivateTmp=yes
+; strict leaves /home, /root and /run/user writable (ProtectHome= governs
+; those), so the first start can write its starter config.
 ProtectSystem=strict
-; strict mounts the root file system read-only, and with it a home directory
-; that lives there; the first start writes its starter config in here.
-; systemd creates the directory if missing and leaves an existing one alone.
-ConfigurationDirectory=ddcolord
-ConfigurationDirectoryMode=0700
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
