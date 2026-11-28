@@ -31,7 +31,8 @@ service.
   sha256 in its README; embedded in the binary and installed under
   `share/ddcolord/examples/icc/`
 - `testdata/` — config test fixtures; `minimal.icc` is the smallest file
-  the ICC check accepts: a 132-byte header and an empty tag table
+  the ICC check accepts: a 128-byte header declaring 132 bytes, then a tag
+  count of zero
 - Hardware notes for the PD3220U: `/home/kuno/nixos/docs/benq-pd3220u-ddc.md`
 
 ## Non-negotiables

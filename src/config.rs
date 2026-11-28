@@ -2,7 +2,6 @@
 //! their color modes. See ddcolord.toml(5).
 
 use std::collections::HashSet;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail, ensure};
@@ -171,21 +170,26 @@ impl Monitor {
 /// nothing: a directory opens, and so does an HTML page saved from a GitHub
 /// "blob" URL.
 fn check_icc(path: &Path) -> Result<()> {
-    let mut f = std::fs::File::open(path).context("opening it")?;
-    // Not a FIFO or a device, which read_to_end would wait on forever.
-    ensure!(f.metadata()?.is_file(), "not a regular file");
-    let mut data = Vec::new();
-    f.read_to_end(&mut data).context("reading it")?;
+    // Before opening: open(2) on a FIFO waits for a writer, and reading a
+    // device such as /dev/zero never ends.
+    let meta = std::fs::metadata(path).context("reading its metadata")?;
+    ensure!(meta.is_file(), "not a regular file");
+    let data = std::fs::read(path).context("reading it")?;
     check_icc_data(&data)
 }
 
 /// The structure of an ICC profile (ICC.1:2022, section 7): the `acsp`
 /// signature at byte 36, the profile size at byte 0, and after the 128-byte
-/// header a tag table whose tags all lie within that size. This is what
-/// lcms2, colord's parser, reads before any tag; it catches truncation, the
-/// way a profile goes bad in an interrupted copy or download, which leaves
-/// the header intact. Bytes past the declared size are ignored, as lcms2
-/// ignores them.
+/// header a tag table whose tags all lie within that size. It catches
+/// truncation, the way a profile goes bad in an interrupted copy or
+/// download, which leaves the header intact.
+///
+/// Stricter than lcms2, colord's parser, on purpose: lcms2 clamps a size
+/// past the end of the file and skips tags beyond it, which is how a
+/// truncated profile comes out half-built. Bytes past the declared size are
+/// ignored, as lcms2 ignores them. What lcms2 refuses that no accident
+/// produces (more than 100 tags, a tag listed twice, version above 5) is
+/// not checked.
 fn check_icc_data(b: &[u8]) -> Result<()> {
     ensure!(
         b.get(36..40) == Some(b"acsp".as_slice()),
