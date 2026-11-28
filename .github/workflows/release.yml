@@ -32,9 +32,15 @@ jobs:
 
       # Use the annotated tag message as release notes. A re-run leaves an
       # existing release alone: deleting it would lose notes edited since.
+      # A draft is not left alone silently, or the job would pass with
+      # nothing published.
       - name: Publish
         run: |
-          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null; then
+          if draft=$(gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq .isDraft); then
+            if [ "${draft}" = true ]; then
+              echo "::error::Release ${GITHUB_REF_NAME} exists as a draft; publish or delete it."
+              exit 1
+            fi
             echo "Release ${GITHUB_REF_NAME} exists; leaving it as is."
             exit 0
           fi
