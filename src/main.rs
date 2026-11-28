@@ -46,10 +46,13 @@ struct Args {
     debug: bool,
 }
 
-/// Per-output state that has to survive between polls.
-#[derive(Debug, Default)]
+/// Per-output state that has to survive between polls. It belongs to one
+/// monitor: another one on the same output starts from scratch.
+#[derive(Debug)]
 struct Tracked {
-    /// Cached bus, kept for as long as the connector stays connected: bus
+    /// The monitor this state is about.
+    edid: Edid,
+    /// Cached bus, kept for as long as the monitor stays connected: bus
     /// numbers belong to the port. Looking again after a failure would only
     /// find the same bus, re-read every adapter's EDID, and log it each poll.
     bus: Option<u32>,
@@ -62,6 +65,16 @@ struct Tracked {
 }
 
 impl Tracked {
+    fn new(edid: Edid) -> Self {
+        Tracked {
+            edid,
+            bus: None,
+            mode: None,
+            profile: None,
+            error: None,
+        }
+    }
+
     fn fail(&mut self, output: &str, msg: String) {
         if self.error.as_ref() != Some(&msg) {
             log::warn!("{output}: {msg}");
@@ -239,30 +252,33 @@ fn poll(cfg: &Config, colord: &Colord, st: &mut State) -> Result<()> {
         }
     }
 
-    // Outputs that went away take their colord device with them, so nothing
-    // hands an application the profile of a monitor that is not there. The
-    // entry stays tracked until the delete succeeds, so a failed one is
-    // retried next poll.
-    let gone: Vec<String> = st
-        .tracked
-        .keys()
-        .filter(|n| !present.iter().any(|(o, _, _)| &o.name == *n))
-        .cloned()
+    // Outputs that went away, or show another monitor now (a laptop resumed
+    // at another desk), take their colord device with them, so nothing hands
+    // an application the profile of a monitor that is not there. The entry
+    // stays tracked until the delete succeeds, so a failed one is retried
+    // next poll.
+    let seen: Vec<(&str, &Edid)> = present
+        .iter()
+        .map(|(o, e, _)| (o.name.as_str(), e))
         .collect();
-    for conn in gone {
-        let deleted = colord.device(&conn).and_then(|d| match d {
+    for name in stale(&st.tracked, &seen) {
+        let deleted = colord.device(&name).and_then(|d| match d {
             Some(d) => colord.delete_device(&d),
             None => Ok(()),
         });
         match deleted {
             Ok(()) => {
-                st.tracked.remove(&conn);
-                log::info!("{conn}: disconnected");
+                st.tracked.remove(&name);
+                if seen.iter().any(|(n, _)| *n == name) {
+                    log::info!("{name}: monitor changed");
+                } else {
+                    log::info!("{name}: disconnected");
+                }
             }
             Err(e) if colord::is_disconnect(&e) => return Err(e),
             Err(e) => {
-                if let Some(t) = st.tracked.get_mut(&conn) {
-                    t.fail(&conn, format!("removing the colord device: {e:#}"));
+                if let Some(t) = st.tracked.get_mut(&name) {
+                    t.fail(&name, format!("removing the colord device: {e:#}"));
                 }
             }
         }
@@ -271,8 +287,13 @@ fn poll(cfg: &Config, colord: &Colord, st: &mut State) -> Result<()> {
     for (o, e, m) in &present {
         let t = st.tracked.entry(o.name.clone()).or_insert_with(|| {
             log::info!("{}: {} {}", o.name, m.vendor, m.model);
-            Tracked::default()
+            Tracked::new(e.clone())
         });
+        if t.edid != *e {
+            // The previous monitor's device is not removed yet; until it is,
+            // this one's profile would land on it.
+            continue;
+        }
         let Some(v) = read_mode(o, &outputs, m, t) else {
             continue;
         };
@@ -284,6 +305,16 @@ fn poll(cfg: &Config, colord: &Colord, st: &mut State) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Tracked outputs to drop: gone, or showing another monitor now. Either
+/// way their colord device describes a monitor that is not there.
+fn stale(tracked: &BTreeMap<String, Tracked>, present: &[(&str, &Edid)]) -> Vec<String> {
+    tracked
+        .iter()
+        .filter(|(n, t)| !present.contains(&(n.as_str(), &t.edid)))
+        .map(|(n, _)| n.clone())
+        .collect()
 }
 
 fn daemon(cfg: &Config) -> Result<()> {
@@ -461,5 +492,28 @@ fn main() -> ExitCode {
             eprintln!("ddcolord: {e:#}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn edid(serial: &str) -> Edid {
+        Edid {
+            vendor: "BNQ".into(),
+            name: Some("BenQ PD3220U".into()),
+            serial: Some(serial.into()),
+        }
+    }
+
+    #[test]
+    fn another_monitor_on_a_tracked_output_makes_it_stale() {
+        let (a, b) = (edid("A"), edid("B"));
+        let tracked = BTreeMap::from([("card1-DP-2".to_string(), Tracked::new(a.clone()))]);
+        assert!(stale(&tracked, &[("card1-DP-2", &a)]).is_empty());
+        assert_eq!(stale(&tracked, &[("card1-DP-2", &b)]), ["card1-DP-2"]);
+        assert_eq!(stale(&tracked, &[("card1-DP-3", &a)]), ["card1-DP-2"]);
+        assert_eq!(stale(&tracked, &[]), ["card1-DP-2"]);
     }
 }

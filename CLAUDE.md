@@ -59,8 +59,13 @@ service.
   A failed 0x50 read must count as "no monitor" (that is what an empty port
   looks like), so one transient NAK on the twin's bus would leave a single
   match and bind the output to the other monitor for good.
-- **The bus cache lives as long as the connector.** Re-looking-up after a
-  failure finds the same bus and logs it every poll.
+- **The bus cache lives as long as the monitor on the output.** Re-looking-up
+  after a failure finds the same bus and logs it every poll.
+- **Per-output state belongs to one monitor (its EDID identity).** Another
+  monitor on the same output — a laptop resumed at another desk — drops the
+  state and the colord device first; otherwise it inherits the old device's
+  metadata, and in a mode that keeps the current profile, the old monitor's
+  profile.
 - **`Monitor` and `Mode` carry `deny_unknown_fields` but no container-level
   `#[serde(default)]`,** against the rust skill's rule. Their identity fields
   are required: with a container default, a missing `vendor` or `model`
