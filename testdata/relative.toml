@@ -3,4 +3,4 @@
 [[monitor]]
 vendor = "TST"
 model = "Fixture"
-unmapped = "header-only.icc"
+unmapped = "minimal.icc"

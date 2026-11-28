@@ -6,9 +6,10 @@ A TOML file mapping monitors, and the values of their color mode feature, to
 ICC profiles.
 Unknown keys are an error, so a misspelt key fails to load instead of being
 ignored.
-Every ICC file is read at load time and must carry the ICC signature; a
-missing file, or one that is not an ICC profile, is an error then, not at
-the first mode switch.
+Every ICC file is read at load time and must be a whole ICC profile: the
+ICC signature, and a size and tag table that fit in the file.
+A missing file, one that is not an ICC profile, or a truncated copy is an
+error then, not at the first mode switch.
 .SH TOP LEVEL
 .TP
 .BR interval " (integer, default 3)"

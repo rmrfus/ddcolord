@@ -165,21 +165,64 @@ impl Monitor {
     }
 }
 
-/// The ICC header carries the signature `acsp` at byte 36 (ICC.1:2022, 7.2.9).
-/// Opening the file is not enough: a directory opens, and so does an HTML
-/// page saved from a GitHub "blob" URL. colord then fails to parse it, but
-/// keeps a half-built profile under that filename which FindProfileByFilename
-/// returns on the next poll, so the failure would turn into a dead default.
+/// colord fails to parse a broken profile but keeps a half-built one under
+/// that filename, which FindProfileByFilename returns on the next poll, so
+/// a bad file would turn into a dead default. Opening the file proves
+/// nothing: a directory opens, and so does an HTML page saved from a GitHub
+/// "blob" URL.
 fn check_icc(path: &Path) -> Result<()> {
-    let mut header = [0u8; 40];
-    std::fs::File::open(path)
-        .and_then(|mut f| f.read_exact(&mut header))
-        .context("reading the header")?;
+    let mut f = std::fs::File::open(path).context("opening it")?;
+    // Not a FIFO or a device, which read_to_end would wait on forever.
+    ensure!(f.metadata()?.is_file(), "not a regular file");
+    let mut data = Vec::new();
+    f.read_to_end(&mut data).context("reading it")?;
+    check_icc_data(&data)
+}
+
+/// The structure of an ICC profile (ICC.1:2022, section 7): the `acsp`
+/// signature at byte 36, the profile size at byte 0, and after the 128-byte
+/// header a tag table whose tags all lie within that size. This is what
+/// lcms2, colord's parser, reads before any tag; it catches truncation, the
+/// way a profile goes bad in an interrupted copy or download, which leaves
+/// the header intact. Bytes past the declared size are ignored, as lcms2
+/// ignores them.
+fn check_icc_data(b: &[u8]) -> Result<()> {
     ensure!(
-        &header[36..] == b"acsp",
+        b.get(36..40) == Some(b"acsp".as_slice()),
         "not an ICC profile (no 'acsp' signature)"
     );
+    let (Some(size), Some(count)) = (be32(b, 0), be32(b, 128)) else {
+        bail!(
+            "truncated: {} bytes, shorter than the header and tag count",
+            b.len()
+        );
+    };
+    let len = b.len() as u64;
+    ensure!(
+        size <= len,
+        "truncated: the header says {size} bytes, the file has {len}"
+    );
+    // Each entry: signature, offset and size, four bytes each.
+    let end = 132 + 12 * count;
+    ensure!(
+        end <= size,
+        "its tag table of {count} entries runs past the profile's {size} bytes"
+    );
+    for e in b[132..usize::try_from(end)?].as_chunks::<12>().0 {
+        let offset = u64::from(u32::from_be_bytes([e[4], e[5], e[6], e[7]]));
+        let tag_size = u64::from(u32::from_be_bytes([e[8], e[9], e[10], e[11]]));
+        ensure!(
+            offset + tag_size <= size,
+            "tag '{}' lies past the profile's {size} bytes",
+            String::from_utf8_lossy(&e[..4])
+        );
+    }
     Ok(())
+}
+
+fn be32(b: &[u8], at: usize) -> Option<u64> {
+    let word: [u8; 4] = b.get(at..at + 4)?.try_into().ok()?;
+    Some(u64::from(u32::from_be_bytes(word)))
 }
 
 /// $XDG_CONFIG_HOME/ddcolord/config.toml, with the XDG fallback to ~/.config.
@@ -213,8 +256,9 @@ mod tests {
         Ok(c)
     }
 
-    /// 128 bytes, zero but for the `acsp` signature.
-    const ICC: &str = "header-only.icc";
+    /// The smallest file that passes check_icc: a header with size 132 and
+    /// the `acsp` signature, and an empty tag table.
+    const ICC: &str = "minimal.icc";
 
     #[test]
     fn exact_sub_mode_wins_over_the_catch_all() {
@@ -351,11 +395,7 @@ mod tests {
         let c = Config::load(Path::new("testdata/relative.toml")).unwrap();
         let icc = c.monitor[0].unmapped.as_deref().unwrap();
         assert!(icc.is_absolute(), "{}", icc.display());
-        assert!(
-            icc.ends_with("testdata/header-only.icc"),
-            "{}",
-            icc.display()
-        );
+        assert!(icc.ends_with("testdata/minimal.icc"), "{}", icc.display());
     }
 
     #[test]
@@ -363,6 +403,36 @@ mod tests {
         assert!(check_icc(&testdata().join(ICC)).is_ok());
         assert!(check_icc(&testdata().join("relative.toml")).is_err());
         assert!(check_icc(&testdata()).is_err());
+    }
+
+    const SRGB: &[u8] = include_bytes!("../examples/icc/sRGB-v4.icc");
+
+    #[test]
+    fn a_truncated_profile_with_an_intact_header_fails_at_load() {
+        assert!(check_icc_data(SRGB).is_ok());
+        let err = check_icc_data(&SRGB[..SRGB.len() - 1]).unwrap_err();
+        assert!(err.to_string().contains("truncated"), "{err}");
+        assert!(check_icc_data(&SRGB[..130]).is_err());
+    }
+
+    #[test]
+    fn a_tag_past_the_declared_size_fails_at_load() {
+        let mut b = SRGB.to_vec();
+        // The first tag's size field.
+        b[140..144].copy_from_slice(&u32::MAX.to_be_bytes());
+        assert!(check_icc_data(&b).is_err());
+
+        let mut b = SRGB.to_vec();
+        // A tag count whose table cannot fit.
+        b[128..132].copy_from_slice(&1000u32.to_be_bytes());
+        assert!(check_icc_data(&b).is_err());
+    }
+
+    #[test]
+    fn bytes_past_the_declared_size_are_ignored() {
+        let mut b = SRGB.to_vec();
+        b.extend_from_slice(&[0; 16]);
+        assert!(check_icc_data(&b).is_ok());
     }
 
     #[test]

@@ -30,8 +30,8 @@ service.
 - `examples/icc/` — vendored CC0 profiles, unmodified, pinned commit and
   sha256 in its README; embedded in the binary and installed under
   `share/ddcolord/examples/icc/`
-- `testdata/` — config test fixtures; `header-only.icc` is 128 bytes, zero
-  but for the `acsp` signature
+- `testdata/` — config test fixtures; `minimal.icc` is the smallest file
+  the ICC check accepts: a 132-byte header and an empty tag table
 - Hardware notes for the PD3220U: `/home/kuno/nixos/docs/benq-pd3220u-ddc.md`
 
 ## Non-negotiables
@@ -65,10 +65,13 @@ service.
   `#[serde(default)]`,** against the rust skill's rule. Their identity fields
   are required: with a container default, a missing `vendor` or `model`
   becomes "" and silently matches no monitor, ever.
-- **ICC files are checked for the `acsp` signature at load.** colord keeps a
-  half-built profile for a file it failed to parse, and FindProfileByFilename
-  hands it back on the next poll, so a bad file would become a dead default
-  that looks like success.
+- **ICC files are checked at load: the `acsp` signature, a declared size the
+  file reaches, and a tag table inside it.** colord keeps a half-built
+  profile for a file it failed to parse, and FindProfileByFilename hands it
+  back on the next poll, so a bad file would become a dead default that
+  looks like success. The signature alone passes a truncated copy, whose
+  header is intact. Tag contents are not checked: that is lcms2's job, and
+  it would add a C dependency to catch files nobody produces by accident.
 - **The starter config copies the bundled profiles; it never points into
   the install prefix.** On NixOS that is a store path, which an upgrade plus
   a GC deletes under a config still naming it, and the daemon then refuses
