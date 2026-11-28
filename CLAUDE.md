@@ -11,8 +11,9 @@ service.
 - `nix develop --command cargo clippy --all-targets --locked -- -D warnings`
 - `git config core.hooksPath hooks` once per clone
 - Live check: `cargo run -- --probe` reads EDID, bus and mode without
-  touching colord; `colormgr get-devices` shows a `ddcolord-card1-DP-2`
-  device only while the daemon runs
+  touching colord; `colormgr get-devices` shows a `ddcolord-<sysfs name>`
+  device (`ddcolord-card1-DP-2`; the card number follows probe order) only
+  while the daemon runs
 
 ## Layout
 

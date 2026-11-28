@@ -113,25 +113,25 @@ fn identity(e: &Edid) -> String {
 /// Read the mode feature. `None` when the bus is busy or the read failed;
 /// failures are reported through `t`.
 fn read_mode(o: &Output, all: &[Output], m: &Monitor, t: &mut Tracked) -> Option<ddc::Vcp> {
-    let conn = &o.name;
+    let out = &o.name;
     let n = match t.bus {
         Some(n) => n,
         None => match drm::find_bus(o, all) {
             Ok(BusLookup::Found(n)) => {
-                log::info!("{conn}: DDC/CI on /dev/i2c-{n}");
+                log::info!("{out}: DDC/CI on /dev/i2c-{n}");
                 t.bus = Some(n);
                 n
             }
             Ok(BusLookup::Busy(n)) => {
-                log::debug!("{conn}: /dev/i2c-{n} is locked by another process, skipping");
+                log::debug!("{out}: /dev/i2c-{n} is locked by another process, skipping");
                 return None;
             }
             Ok(BusLookup::NotFound) => {
-                t.fail(conn, "no I2C bus returns this monitor's EDID".into());
+                t.fail(out, "no I2C bus returns this monitor's EDID".into());
                 return None;
             }
             Err(e) => {
-                t.fail(conn, format!("{e:#}"));
+                t.fail(out, format!("{e:#}"));
                 return None;
             }
         },
@@ -139,18 +139,18 @@ fn read_mode(o: &Output, all: &[Output], m: &Monitor, t: &mut Tracked) -> Option
     let bus = match Bus::open(n) {
         Ok(Some(bus)) => bus,
         Ok(None) => {
-            log::debug!("{conn}: /dev/i2c-{n} is locked by another process, skipping");
+            log::debug!("{out}: /dev/i2c-{n} is locked by another process, skipping");
             return None;
         }
         Err(e) => {
-            t.fail(conn, format!("{e:#}"));
+            t.fail(out, format!("{e:#}"));
             return None;
         }
     };
     match ddc::get_vcp(&bus, m.feature) {
         Ok(v) => Some(v),
         Err(e) => {
-            t.fail(conn, format!("/dev/i2c-{n}: {e:#}"));
+            t.fail(out, format!("/dev/i2c-{n}: {e:#}"));
             None
         }
     }
@@ -165,11 +165,11 @@ fn apply(
     v: ddc::Vcp,
     t: &mut Tracked,
 ) -> Result<()> {
-    let conn = &o.name;
+    let out = &o.name;
     if t.mode != Some((v.sl, v.sh)) {
         let name = m.mode(v.sl, v.sh).map_or("unlisted", |mode| &mode.name);
         log::info!(
-            "{conn}: color mode {name} (sl={:#04x} sh={:#04x})",
+            "{out}: color mode {name} (sl={:#04x} sh={:#04x})",
             v.sl,
             v.sh
         );
@@ -179,38 +179,38 @@ fn apply(
         return Ok(());
     };
 
-    let device = match colord.device(conn)? {
+    let device = match colord.device(out)? {
         Some(d) => d,
         None => {
             if let Some(other) = colord.device_for_xrandr(&o.connector)? {
                 log::warn!(
-                    "{conn}: colord already has {other} for XRANDR_name={}; \
+                    "{out}: colord already has {other} for XRANDR_name={}; \
                      applications may be handed that one instead",
                     o.connector
                 );
             }
             let d = colord.create_device(&colord::Display {
-                output: conn,
+                output: out,
                 connector: &o.connector,
                 vendor: &e.vendor,
                 model: e.name.as_deref().unwrap_or(&m.model),
                 serial: e.serial.as_deref(),
             })?;
-            log::info!("{conn}: created colord device {d}");
+            log::info!("{out}: created colord device {d}");
             d
         }
     };
     let profile = colord.profile(icc)?;
     if colord.default_profile(&device)?.as_ref() != Some(&profile) {
         // At debug, so a second writer fighting over the default shows up.
-        log::debug!("{conn}: MakeProfileDefault {profile}");
+        log::debug!("{out}: MakeProfileDefault {profile}");
         colord.make_default(&device, &profile)?;
     }
     // Logged on change of what we asked for, not on whether colord needed
     // the call: colord re-applies remembered device-profile pairs from its
     // mapping.db when a profile is created, so it is often already default.
     if t.profile.as_deref() != Some(icc) {
-        log::info!("{conn}: profile {}", icc.display());
+        log::info!("{out}: profile {}", icc.display());
         t.profile = Some(icc.to_path_buf());
     }
     Ok(())
@@ -407,35 +407,49 @@ fn write_stdout(s: &str) -> Result<()> {
 }
 
 /// First start: write a config for what is connected now, rather than make
-/// every new user go hunting for the format.
+/// every new user go hunting for the format. With nothing connected that a
+/// starter could name, such as a monitor still off at login, wait for one:
+/// exiting instead, the service would use up its restarts in seconds and
+/// stay failed after the monitor came on.
 fn write_starter(path: &std::path::Path) -> Result<()> {
-    let outputs = drm::connected()?;
-    let parsed: Vec<(&str, Edid)> = outputs
-        .iter()
-        .filter_map(|o| Some((o.name.as_str(), edid::parse(&o.edid).ok()?)))
-        .collect();
-    let refs: Vec<(&str, &Edid)> = parsed.iter().map(|(c, e)| (*c, e)).collect();
-    let Some(text) = starter::render(&refs) else {
-        bail!(
-            "no config at {}, and no connected monitor whose EDID names it \
-             to write a starter for (ddcolord --probe shows why)",
-            path.display()
-        );
-    };
-    starter::write(path, &text)?;
-    // Only outputs the starter has an entry for; the others are reported by
-    // the poll loop once it runs.
-    let covered: Vec<String> = refs
-        .iter()
-        .filter_map(|(c, e)| Some(format!("{c} ({} {})", e.vendor, e.name.as_deref()?)))
-        .collect();
-    log::warn!(
-        "no config at {}: wrote a starter for {} and running with it; \
-         edit it and restart to apply changes (ddcolord.toml(5))",
-        path.display(),
-        covered.join(", ")
-    );
-    Ok(())
+    let mut waiting = false;
+    loop {
+        let outputs = drm::connected()?;
+        let parsed: Vec<(&str, Edid)> = outputs
+            .iter()
+            .filter_map(|o| Some((o.name.as_str(), edid::parse(&o.edid).ok()?)))
+            .collect();
+        let refs: Vec<(&str, &Edid)> = parsed.iter().map(|(n, e)| (*n, e)).collect();
+        if let Some(text) = starter::render(&refs) {
+            starter::write(path, &text)?;
+            // Only outputs the starter has an entry for; the others are
+            // reported by the poll loop once it runs.
+            let covered: Vec<String> = refs
+                .iter()
+                .filter_map(|(n, e)| Some(format!("{n} ({} {})", e.vendor, e.name.as_deref()?)))
+                .collect();
+            log::warn!(
+                "no config at {}: wrote a starter for {} and running with it; \
+                 edit it and restart to apply changes (ddcolord.toml(5))",
+                path.display(),
+                covered.join(", ")
+            );
+            return Ok(());
+        }
+        if !waiting {
+            log::warn!(
+                "no config at {}, and no connected monitor whose EDID names it \
+                 to write a starter for; waiting for one (ddcolord --probe \
+                 shows what is connected)",
+                path.display()
+            );
+            // Started, if not useful yet: systemd fails a start that does
+            // not report ready within its timeout.
+            notify_ready::ready();
+            waiting = true;
+        }
+        sleep(Duration::from_secs(Config::default().interval));
+    }
 }
 
 fn run(args: Args) -> Result<()> {

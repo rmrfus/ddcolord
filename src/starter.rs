@@ -69,7 +69,7 @@ pub fn render(outputs: &[(&str, &Edid)]) -> Option<String> {
     let mut ordered = outputs.to_vec();
     ordered.sort_by_key(|(_, e)| e.serial.is_none());
     let mut done: Vec<(&str, &Edid)> = Vec::new();
-    for (conn, e) in &ordered {
+    for (output, e) in &ordered {
         let Some(model) = &e.name else { continue };
         if let Some((first, _)) = done.iter().find(|(_, d)| **d == **e) {
             let why = if e.serial.is_some() {
@@ -78,7 +78,7 @@ pub fn render(outputs: &[(&str, &Edid)]) -> Option<String> {
                 "the same vendor and model, and no serial to tell them apart"
             };
             body.push_str(&format!(
-                "\n# {conn}: {why} as {first}, whose entry covers it too.\n"
+                "\n# {output}: {why} as {first}, whose entry covers it too.\n"
             ));
             continue;
         }
@@ -93,7 +93,9 @@ pub fn render(outputs: &[(&str, &Edid)]) -> Option<String> {
         body.push('\n');
         match table_for(e) {
             Some(table) => {
-                body.push_str(&format!("# {conn}: the shipped table for this monitor.\n"));
+                body.push_str(&format!(
+                    "# {output}: the shipped table for this monitor.\n"
+                ));
                 // Keys of a table may come in any order; right after the header
                 // needs no knowledge of the table's own layout.
                 body.push_str(&table.replacen(
@@ -102,9 +104,9 @@ pub fn render(outputs: &[(&str, &Edid)]) -> Option<String> {
                     1,
                 ));
             }
-            None => body.push_str(&skeleton(conn, &e.vendor, model, &serial)),
+            None => body.push_str(&skeleton(output, &e.vendor, model, &serial)),
         }
-        done.push((conn, e));
+        done.push((output, e));
     }
     if body.is_empty() {
         return None;
@@ -125,9 +127,9 @@ fn table_for(e: &Edid) -> Option<&'static str> {
 /// `feature` is written out, not left to its default: 0xDC is only a guess
 /// for a monitor nobody has looked at, and an undeclared code can answer with
 /// echoed values that look real (see ddc.rs).
-fn skeleton(conn: &str, vendor: &str, model: &str, serial: &str) -> String {
+fn skeleton(output: &str, vendor: &str, model: &str, serial: &str) -> String {
     format!(
-        "# {conn}: no shipped table for this monitor. As it stands, the daemon logs
+        "# {output}: no shipped table for this monitor. As it stands, the daemon logs
 # every OSD mode switch as \"color mode unlisted (sl=.. sh=..)\"; add a
 # [[monitor.mode]] for each mode you want a profile for.
 [[monitor]]
