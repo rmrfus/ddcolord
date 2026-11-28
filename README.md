@@ -25,6 +25,8 @@ output.
 - colord gets a display device per output with `XRANDR_name=<connector>`
   (what colord clients look a display up by) and the mode's profile as its
   default. Device and profiles are temporary: they vanish when ddcolord stops.
+- With `notify = true` in the config, each profile switch also shows a
+  desktop notification.
 
 No libddcutil: DDC/CI is spoken directly, which keeps the project MIT.
 

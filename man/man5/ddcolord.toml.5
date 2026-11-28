@@ -16,6 +16,16 @@ error then, not at the first mode switch.
 Seconds between polls.
 At least 1.
 .TP
+.BR notify " (boolean, default false)"
+Show a desktop notification, through the notification daemon on the
+session bus, each time a mode switch changes the profile.
+The summary names the monitor and the mode, the body the profile's file
+and the connector; the next switch replaces it.
+The first profile after start, or after a monitor appears, is not
+announced, nor is a mode that keeps the current profile.
+Without a notification daemon, each switch logs a warning and the profile
+still changes.
+.TP
 .B [[monitor]]
 One table per monitor model.
 The first entry that matches an output's EDID wins.

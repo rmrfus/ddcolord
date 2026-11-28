@@ -7,6 +7,7 @@ mod ddc;
 mod drm;
 mod edid;
 mod i2c;
+mod notification;
 mod notify_ready;
 mod starter;
 
@@ -25,6 +26,7 @@ use config::{Choice, Config, Monitor};
 use drm::{BusLookup, Output};
 use edid::Edid;
 use i2c::Bus;
+use notification::Notifier;
 
 #[derive(Parser)]
 #[command(version, about = "Keep colord's display profile in step with the monitor's color mode", long_about = None)]
@@ -62,6 +64,9 @@ struct Tracked {
     profile: Option<PathBuf>,
     /// Last error logged, so a monitor asleep for an hour logs one line.
     error: Option<String>,
+    /// Id of the last desktop notification for this monitor, which the next
+    /// one replaces; 0 for none.
+    notification: u32,
 }
 
 impl Tracked {
@@ -72,6 +77,7 @@ impl Tracked {
             mode: None,
             profile: None,
             error: None,
+            notification: 0,
         }
     }
 
@@ -157,6 +163,8 @@ fn read_mode(o: &Output, all: &[Output], m: &Monitor, t: &mut Tracked) -> Option
 }
 
 /// Make colord's default profile for this output the one the mode asks for.
+/// True when that switched from a profile set earlier for this monitor:
+/// the first profile after it appeared, or after a restart, is no switch.
 fn apply(
     colord: &Colord,
     o: &Output,
@@ -164,7 +172,7 @@ fn apply(
     m: &Monitor,
     v: ddc::Vcp,
     t: &mut Tracked,
-) -> Result<()> {
+) -> Result<bool> {
     let out = &o.name;
     if t.mode != Some((v.sl, v.sh)) {
         let name = m.mode(v.sl, v.sh).map_or("unlisted", |mode| &mode.name);
@@ -176,7 +184,7 @@ fn apply(
         t.mode = Some((v.sl, v.sh));
     }
     let Choice::Profile(icc) = m.choice(v.sl, v.sh) else {
-        return Ok(());
+        return Ok(false);
     };
 
     let device = match colord.device(out)? {
@@ -209,20 +217,24 @@ fn apply(
     // Logged on change of what we asked for, not on whether colord needed
     // the call: colord re-applies remembered device-profile pairs from its
     // mapping.db when a profile is created, so it is often already default.
-    if t.profile.as_deref() != Some(icc) {
-        log::info!("{out}: profile {}", icc.display());
-        t.profile = Some(icc.to_path_buf());
+    if t.profile.as_deref() == Some(icc) {
+        return Ok(false);
     }
-    Ok(())
+    log::info!("{out}: profile {}", icc.display());
+    let switched = t.profile.is_some();
+    t.profile = Some(icc.to_path_buf());
+    Ok(switched)
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct State {
     tracked: BTreeMap<String, Tracked>,
     /// Connected outputs we do not drive, with the reason last logged; a
     /// reason is logged once, and again only when it changes. Without the
     /// line, a typo in `model` looks exactly like "unplugged".
     ignored: BTreeMap<String, String>,
+    /// Set with `notify = true`.
+    notifier: Option<Notifier>,
 }
 
 impl State {
@@ -299,7 +311,19 @@ fn poll(cfg: &Config, colord: &Colord, st: &mut State) -> Result<()> {
         };
         log::debug!("{}: {v:?}", o.name);
         match apply(colord, o, e, m, v, t) {
-            Ok(()) => t.ok(&o.name),
+            Ok(switched) => {
+                t.ok(&o.name);
+                if switched
+                    && let Some(n) = st.notifier.as_mut()
+                    && let Some(icc) = &t.profile
+                {
+                    let (summary, body) =
+                        notification::text(&m.model, m.mode(v.sl, v.sh), icc, &o.connector);
+                    if let Some(id) = n.show(t.notification, &summary, &body) {
+                        t.notification = id;
+                    }
+                }
+            }
             Err(err) if colord::is_disconnect(&err) => return Err(err),
             Err(err) => t.fail(&o.name, format!("{err:#}")),
         }
@@ -319,7 +343,10 @@ fn stale(tracked: &BTreeMap<String, Tracked>, present: &[(&str, &Edid)]) -> Vec<
 
 fn daemon(cfg: &Config) -> Result<()> {
     let colord = Colord::connect()?;
-    let mut st = State::default();
+    let mut st = State {
+        notifier: cfg.notify.then(Notifier::default),
+        ..State::default()
+    };
     notify_ready::ready();
     log::info!("polling every {}s", cfg.interval);
     loop {

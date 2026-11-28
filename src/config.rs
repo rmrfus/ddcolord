@@ -14,6 +14,8 @@ use crate::edid::Edid;
 pub struct Config {
     /// Seconds between polls.
     pub interval: u64,
+    /// Show a desktop notification on each profile switch.
+    pub notify: bool,
     pub monitor: Vec<Monitor>,
 }
 
@@ -21,6 +23,7 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             interval: d_interval(),
+            notify: false,
             monitor: Vec::new(),
         }
     }

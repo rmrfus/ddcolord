@@ -24,6 +24,8 @@ service.
 - `i2c.rs` — `/dev/i2c-N`: flock + `I2C_RDWR`
 - `ddc.rs` — DDC/CI Get VCP request and reply
 - `colord.rs` — colord D-Bus calls
+- `notification.rs` — desktop notifications on the session bus, for
+  `notify = true`
 - `starter.rs` — the first-start config: shipped table or skeleton, plus
   the bundled profiles, written without ever overwriting
 - `examples/benq-pd3220u.toml` — the shipped monitor table, also embedded as
@@ -68,6 +70,10 @@ service.
   state and the colord device first; otherwise it inherits the old device's
   metadata, and in a mode that keeps the current profile, the old monitor's
   profile.
+- **Notification errors never leave `notification.rs`.** The poll loop
+  reads a D-Bus Disconnected error as a lost system bus and exits; one from
+  the session bus would restart the daemon over a notification daemon that
+  is not running.
 - **`Monitor` and `Mode` carry `deny_unknown_fields` but no container-level
   `#[serde(default)]`,** against the rust skill's rule. Their identity fields
   are required: with a container default, a missing `vendor` or `model`
