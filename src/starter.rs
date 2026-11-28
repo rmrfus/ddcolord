@@ -14,9 +14,9 @@
 use std::fs::{self, DirBuilder, OpenOptions};
 use std::io::{self, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 
 use crate::config::Config;
 use crate::edid::Edid;
@@ -183,20 +183,16 @@ pub fn write(path: &Path, text: &str) -> Result<()> {
 /// hard-linked into place: unlike rename, link refuses to replace, so a crash
 /// leaves no half-written file and a concurrent writer loses nothing.
 fn create_new(path: &Path, bytes: &[u8]) -> Result<bool> {
-    let mut tmp = path.as_os_str().to_owned();
-    tmp.push(format!(".tmp{}", std::process::id()));
-    let tmp = Path::new(&tmp);
-    // Only the link may answer AlreadyExists for "the file is there": a temp
-    // left by a crashed run under a reused PID would otherwise read the same
-    // way and skip a file the config then names.
-    let linked = write_temp(tmp, bytes)
+    let (tmp, mut f) = temp_beside(path)?;
+    let linked = f
+        .write_all(bytes)
+        .and_then(|()| f.sync_all())
         .with_context(|| format!("writing {}", tmp.display()))
-        .map(|()| fs::hard_link(tmp, path));
-    if let Err(e) = fs::remove_file(tmp)
-        && e.kind() != io::ErrorKind::NotFound
-    {
+        .map(|()| fs::hard_link(&tmp, path));
+    if let Err(e) = fs::remove_file(&tmp) {
         log::warn!("leaving {}: {e}", tmp.display());
     }
+    // Only the link may answer AlreadyExists for "the file is there".
     match linked? {
         Ok(()) => Ok(true),
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(false),
@@ -204,25 +200,26 @@ fn create_new(path: &Path, bytes: &[u8]) -> Result<bool> {
     }
 }
 
-/// A fresh 0600 file with `bytes`, synced. A stale temp of the same name is
-/// replaced: nothing but a dead run of ours writes that name.
-fn write_temp(tmp: &Path, bytes: &[u8]) -> io::Result<()> {
-    let open = || {
-        OpenOptions::new()
+/// A new 0600 file beside `path`, under a name nothing holds yet. A taken
+/// name, left by a dead run of ours or belonging to anything else, is
+/// skipped, never removed.
+fn temp_beside(path: &Path) -> Result<(PathBuf, fs::File)> {
+    for n in 0..16 {
+        let mut name = path.as_os_str().to_owned();
+        name.push(format!(".tmp{}.{n}", std::process::id()));
+        let tmp = PathBuf::from(name);
+        let opened = OpenOptions::new()
             .write(true)
             .create_new(true)
             .mode(0o600)
-            .open(tmp)
-    };
-    let mut f = match open() {
-        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
-            fs::remove_file(tmp)?;
-            open()?
+            .open(&tmp);
+        match opened {
+            Ok(f) => return Ok((tmp, f)),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(e).with_context(|| format!("creating {}", tmp.display())),
         }
-        other => other?,
-    };
-    f.write_all(bytes)?;
-    f.sync_all()
+    }
+    bail!("no free temp file name beside {}", path.display())
 }
 
 #[cfg(test)]
@@ -321,15 +318,24 @@ mod tests {
     }
 
     #[test]
-    fn a_stale_temp_from_a_dead_run_does_not_skip_the_file() {
+    fn files_at_temp_names_are_left_alone_and_do_not_skip_the_file() {
         let dir = scratch("stale");
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("f");
-        let stale = dir.join(format!("f.tmp{}", std::process::id()));
-        fs::write(&stale, b"old").unwrap();
+        // The temp name, and the one used before it had a counter.
+        let pid = std::process::id();
+        let taken = [
+            dir.join(format!("f.tmp{pid}.0")),
+            dir.join(format!("f.tmp{pid}")),
+        ];
+        for t in &taken {
+            fs::write(t, b"theirs").unwrap();
+        }
         assert!(create_new(&path, b"new").unwrap());
         assert_eq!(fs::read(&path).unwrap(), b"new");
-        assert!(!stale.exists());
+        for t in &taken {
+            assert_eq!(fs::read(t).unwrap(), b"theirs", "{}", t.display());
+        }
         fs::remove_dir_all(&dir).unwrap();
     }
 
