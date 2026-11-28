@@ -30,10 +30,14 @@ jobs:
       - name: Verify the tag builds
         run: nix build
 
-      # Use the annotated tag message as release notes.
+      # Use the annotated tag message as release notes. A re-run leaves an
+      # existing release alone: deleting it would lose notes edited since.
       - name: Publish
         run: |
-          gh release delete "${GITHUB_REF_NAME}" --yes --repo "${GITHUB_REPOSITORY}" 2>/dev/null || true
+          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null; then
+            echo "Release ${GITHUB_REF_NAME} exists; leaving it as is."
+            exit 0
+          fi
           # --notes-from-tag requires local repository context, without --repo.
           gh release create "${GITHUB_REF_NAME}" \
             --title "${GITHUB_REF_NAME}" \
